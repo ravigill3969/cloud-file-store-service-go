@@ -73,6 +73,16 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		PublicKey: publicKey,
 	}
 
+	token, err := utils.CreateToken(user.UUID.String())
+
+	if err != nil {
+		log.Printf("Error while creating token: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	utils.SetAuthCookie(w, token)
+
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
