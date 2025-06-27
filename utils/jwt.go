@@ -21,14 +21,13 @@ func SetAuthCookie(w http.ResponseWriter, tokenString string) {
 	expirationTime := time.Now().Add(5 * time.Minute)
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "token",              // Name of your cookie
-		Value:    tokenString,          // The JWT string
-		Expires:  expirationTime,       // When the cookie expires
-		Path:     "/",                  // Cookie is valid for all paths in the domain
-		HttpOnly: true,                 // Important: Prevents client-side JavaScript access
-		Secure:   true,                 // Important: Cookie will only be sent over HTTPS
-		SameSite: http.SameSiteLaxMode, // Recommended for CSRF protection (or StrictMode)
-
+		Name:     "access_token",
+		Value:    tokenString,
+		Expires:  expirationTime,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 

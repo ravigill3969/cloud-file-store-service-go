@@ -94,3 +94,76 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("User registered successfully: %s (%s)\n", user.Username, user.UUID)
 }
+
+func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var loginForm models.LoginForm
+	if err := json.NewDecoder(r.Body).Decode(&loginForm); err != nil {
+		log.Printf("Error decoding login request body: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if loginForm.Password == "" || (loginForm.Username == "" && loginForm.Email == "") {
+		http.Error(w, "username/email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	var storedUser models.User
+	var query string
+	var args []interface{}
+
+	if loginForm.Username != "" {
+		query = "SELECT uuid, password_hash FROM users WHERE username = $1"
+		args = []interface{}{loginForm.Username}
+	} else {
+		query = "SELECT uuid, password_hash FROM users WHERE email = $1"
+		args = []interface{}{loginForm.Email}
+	}
+
+	err := h.DB.QueryRow(query, args...).Scan(
+		&storedUser.UUID,
+		&storedUser.PasswordHash,
+	)
+
+	if err == sql.ErrNoRows {
+		log.Printf("Login attempt failed: User not found for username/email: %s %s", loginForm.Username, loginForm.Email)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		log.Printf("Error querying user for login: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if !utils.CheckPasswordHash(loginForm.Password, storedUser.PasswordHash) {
+		log.Printf("Login attempt failed: Password mismatch for user %s", storedUser.Username)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	tokenString, err := utils.CreateToken(storedUser.UUID.String())
+	if err != nil {
+		log.Printf("Error creating token during login: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	utils.SetAuthCookie(w, tokenString)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	safeUserResponse := models.LoginRes{
+		Message: "Logged in successfully!",
+		Status:  "ok",
+	}
+
+	if err := json.NewEncoder(w).Encode(safeUserResponse); err != nil {
+		log.Printf("Error encoding login response to JSON: %v", err)
+		http.Error(w, "Failed to encode response after login", http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Printf("User %s (UUID: %s) logged in successfully.\n", storedUser.Username, storedUser.UUID.String())
+}
