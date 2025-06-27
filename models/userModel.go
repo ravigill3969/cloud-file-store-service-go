@@ -27,17 +27,6 @@ type SafeUser struct {
 	PublicKey string    `json:"public_key"`
 }
 
-type LoginForm struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type LoginRes struct {
-	Message string `json:"message"`
-	Status  string `json:"status"`
-}
-
 type UserAPIUsage struct {
 	UserUUID    uuid.UUID `db:"user_uuid" json:"user_uuid"`
 	PeriodStart time.Time `db:"period_start" json:"period_start"`

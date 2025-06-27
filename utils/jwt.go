@@ -18,12 +18,22 @@ var jwtKey = []byte(os.Getenv("ACCESS_JWT_TOKEN_SECRET"))
 
 func SetAuthCookie(w http.ResponseWriter, tokenString string) {
 
-	expirationTime := time.Now().Add(5 * time.Minute)
+	accessTokenExpirationTime := time.Now().Add(5 * 24 * time.Hour)
+	refreshTokenExpirationTime := time.Now().Add(30 * 24 * time.Hour)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
 		Value:    tokenString,
-		Expires:  expirationTime,
+		Expires:  accessTokenExpirationTime,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    tokenString,
+		Expires:  refreshTokenExpirationTime,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,

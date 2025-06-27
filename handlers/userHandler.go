@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/ravigill3969/cloud-file-store/models"
 	"github.com/ravigill3969/cloud-file-store/utils"
@@ -13,6 +14,22 @@ import (
 
 type UserHandler struct {
 	DB *sql.DB
+}
+
+type LoginForm struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type LoginRes struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+type LogoutRes struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
 }
 
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +113,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var loginForm models.LoginForm
+	var loginForm LoginForm
 	if err := json.NewDecoder(r.Body).Decode(&loginForm); err != nil {
 		log.Printf("Error decoding login request body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -154,7 +171,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	safeUserResponse := models.LoginRes{
+	safeUserResponse := LoginRes{
 		Message: "Logged in successfully!",
 		Status:  "ok",
 	}
@@ -166,4 +183,42 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Printf("User %s (UUID: %s) logged in successfully.\n", storedUser.Username, storedUser.UUID.String())
+}
+
+func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
+
+	logOutResponse := LogoutRes{
+		Message: "Logged out successfully!",
+		Status:  "ok",
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    "",
+		Expires:  time.Now().Add(-time.Hour),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "tokenString",
+		Expires:  time.Now().Add(-time.Hour),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	err := json.NewEncoder(w).Encode(logOutResponse)
+
+	if err != nil {
+		log.Printf("Error encoding logout response to JSON: %v", err)
+		http.Error(w, "Failed to encode response after logout", http.StatusInternalServerError)
+		return
+	}
 }
