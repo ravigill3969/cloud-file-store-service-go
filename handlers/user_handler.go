@@ -208,5 +208,10 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
-	
+	id := r.Context().Value("userID")
+
+	fmt.Println(id)
+
+	w.WriteHeader(http.StatusOK)
+
 }

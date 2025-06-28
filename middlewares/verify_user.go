@@ -1,14 +1,13 @@
 package middleware
 
 import (
-	"context" // Required for passing values through request context
+	"context"
 	"log"
 	"net/http"
 
 	"github.com/ravigill3969/cloud-file-store/utils"
 )
 
-// Define a custom type for context keys to avoid collisions.
 type contextKey string
 
 // UserIDContextKey is the key used to store the authenticated UserID in the request context.

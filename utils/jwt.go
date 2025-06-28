@@ -69,18 +69,16 @@ func CreateToken(userID string) (string, error) {
 }
 
 func ParseToken(tokenString string) (*Claims, error) {
+
+	var jwtKey = []byte(os.Getenv("ACCESS_JWT_TOKEN_SECRET"))
+
 	if len(jwtKey) == 0 {
 		return nil, fmt.Errorf("JWT secret key not initialized")
 	}
 
 	parsedClaims := &Claims{}
 
-	token, err := jwt.ParseWithClaims(tokenString, parsedClaims, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return jwtKey, nil
-	}, jwt.WithLeeway(5*time.Second))
+	token, err := jwt.ParseWithClaims(tokenString, parsedClaims, keyFunc, jwt.WithLeeway(5*time.Second))
 
 	if err != nil {
 		switch {
@@ -132,4 +130,11 @@ func ParseToken(tokenString string) (*Claims, error) {
 	}
 
 	return finalClaims, nil
+}
+
+func keyFunc(token *jwt.Token) (interface{}, error) {
+	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+	}
+	return jwtKey, nil
 }
