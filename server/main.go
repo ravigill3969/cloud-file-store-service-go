@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/ravigill3969/cloud-file-store/database"
 	"github.com/ravigill3969/cloud-file-store/handlers"
+	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/routes"
 )
 
@@ -44,7 +45,9 @@ func main() {
 		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")
 	})
 
+	middleware := middleware.SetCommonHeaders(mux)
+
 	fmt.Printf("TLS server is running on http://localhost:%s\n", PORT)
 
-	log.Fatal(http.ListenAndServeTLS(":"+PORT, "cert.pem", "key.pem", mux))
+	log.Fatal(http.ListenAndServeTLS(":"+PORT, "cert.pem", "key.pem", middleware))
 }
