@@ -74,15 +74,21 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		PublicKey: publicKey,
 	}
 
-	token, err := utils.CreateToken(user.UUID.String())
-
+	tokenStringForAccess, err := utils.CreateToken(user.UUID.String(), 3)
 	if err != nil {
-		log.Printf("Error while creating token: %v", err)
+		log.Printf("Error creating token during register: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	utils.SetAuthCookie(w, token)
+	tokenStringForRefresh, err := utils.CreateToken(user.UUID.String(), 10)
+	if err != nil {
+		log.Printf("Error creating token during register: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	utils.SetAuthCookie(w, tokenStringForAccess, tokenStringForRefresh)
 
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -143,14 +149,21 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenString, err := utils.CreateToken(storedUser.UUID.String())
+	tokenStringForAccess, err := utils.CreateToken(storedUser.UUID.String(), 3)
+	if err != nil {
+		log.Printf("Error creating token during login: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	
+	tokenStringForRefresh, err := utils.CreateToken(storedUser.UUID.String(), 10)
 	if err != nil {
 		log.Printf("Error creating token during login: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	utils.SetAuthCookie(w, tokenString)
+	utils.SetAuthCookie(w, tokenStringForAccess, tokenStringForRefresh)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
