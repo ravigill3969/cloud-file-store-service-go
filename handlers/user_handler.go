@@ -16,22 +16,6 @@ type UserHandler struct {
 	DB *sql.DB
 }
 
-type LoginForm struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type LoginRes struct {
-	Message string `json:"message"`
-	Status  string `json:"status"`
-}
-
-type LogoutRes struct {
-	Message string `json:"message"`
-	Status  string `json:"status"`
-}
-
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 
@@ -113,7 +97,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var loginForm LoginForm
+	var loginForm models.LoginForm
 	if err := json.NewDecoder(r.Body).Decode(&loginForm); err != nil {
 		log.Printf("Error decoding login request body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -171,7 +155,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	safeUserResponse := LoginRes{
+	safeUserResponse := models.LoginRes{
 		Message: "Logged in successfully!",
 		Status:  "ok",
 	}
@@ -187,7 +171,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
-	logOutResponse := LogoutRes{
+	logOutResponse := models.LogoutRes{
 		Message: "Logged out successfully!",
 		Status:  "ok",
 	}
@@ -221,4 +205,8 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to encode response after logout", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
+	
 }

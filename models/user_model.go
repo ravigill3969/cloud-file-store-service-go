@@ -32,3 +32,19 @@ type UserAPIUsage struct {
 	PeriodStart time.Time `db:"period_start" json:"period_start"`
 	APICalls    int       `db:"api_calls" json:"api_calls"`
 }
+
+type LoginForm struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type LoginRes struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+type LogoutRes struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
