@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 
 	_ "github.com/lib/pq"
@@ -32,7 +33,7 @@ func ConnectDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	fmt.Println("Successfully connected!")
+	slog.Info("Successfully connected!")
 
 	return db, nil
 

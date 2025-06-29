@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -10,10 +11,7 @@ import (
 
 type contextKey string
 
-// UserIDContextKey is the key used to store the authenticated UserID in the request context.
 const UserIDContextKey contextKey = "userID"
-
-// mux.Handle("GET /api/users/get-user", middleware.AuthMiddleware(http.HandlerFunc(uh.GetUserInfo)))
 
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +35,8 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "Unauthorized: Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
+
+		fmt.Println(claims)
 
 		ctx := context.WithValue(r.Context(), UserIDContextKey, claims.UserID)
 		r = r.WithContext(ctx)

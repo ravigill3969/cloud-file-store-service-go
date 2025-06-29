@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/models"
 	"github.com/ravigill3969/cloud-file-store/utils"
 )
@@ -51,9 +52,6 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-
-	fmt.Println("Public Key:", publicKey)
-	fmt.Println("Secret Key:", secretKey)
 
 	err = h.DB.QueryRow(`
     INSERT INTO users (username, email, password_hash, public_key, secret_key)
@@ -155,7 +153,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	
+
 	tokenStringForRefresh, err := utils.CreateToken(storedUser.UUID.String(), 10)
 	if err != nil {
 		log.Printf("Error creating token during login: %v", err)
@@ -179,7 +177,6 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("User %s (UUID: %s) logged in successfully.\n", storedUser.Username, storedUser.UUID.String())
 }
 
 func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
@@ -221,10 +218,82 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
-	id := r.Context().Value("userID")
 
-	fmt.Println(id)
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	row := h.DB.QueryRow("SELECT username, email, public_key, account_type, max_api_calls, storage_used_mb, storage_quota_mb FROM users WHERE uuid = $1", &userID)
+
+	var user models.UserProfile
+
+	err := row.Scan(
+		&user.Username,
+		&user.Email,
+		&user.PublicKey,
+		&user.AccountType,
+		&user.MaxAPICall,
+		&user.StorageUsedMB,
+		&user.StorageQuotaMB,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("User not found for ID: %s", userID)
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
+			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
+	if err := json.NewEncoder(w).Encode(user); err != nil {
+		log.Printf("Error encoding user info to JSON: %v", err)
+	}
+}
+func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
+	var password models.Password
+
+	if err := json.NewDecoder(r.Body).Decode(&password); err != nil {
+		http.Error(w, "Password is required", http.StatusBadRequest)
+		return
+	}
+
+	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	row := h.DB.QueryRow("SELECT username, password_hash, email, secret_key FROM users WHERE uuid = $1", userId)
+
+	var user models.UserForSecretKey
+	if err := row.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.SecretKey); err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("User not found for ID: %s", userId)
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			log.Printf("Database error while fetching user info for ID %s: %v", userId, err)
+			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if !utils.CheckPasswordHash(password.Password, user.PasswordHash) {
+		http.Error(w, "Incorrect password", http.StatusUnauthorized)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(user.SecretKey); err != nil {
+		log.Printf("Error encoding secret key to JSON: %v", err)
+	}
 }

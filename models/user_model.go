@@ -48,3 +48,24 @@ type LogoutRes struct {
 	Message string `json:"message"`
 	Status  string `json:"status"`
 }
+
+type UserProfile struct {
+	Username       string `json:"username"`
+	Email          string `json:"email"`
+	PublicKey      string `json:"public_key"`
+	AccountType    string `json:"account_type"`
+	MaxAPICall     int    `json:"max_api_calls"`
+	StorageUsedMB  int    `json:"storage_used_mb"`
+	StorageQuotaMB int    `json:"storage_quota_mb"`
+}
+
+type Password struct {
+	Password string `json:"password"`
+}
+
+type UserForSecretKey struct {
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	PasswordHash string `db:"password_hash" json:"password_hash"`
+	SecretKey    string `db:"secret_key" json:"secret_key"`
+}
