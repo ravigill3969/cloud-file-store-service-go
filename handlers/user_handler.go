@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,10 +12,12 @@ import (
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/models"
 	"github.com/ravigill3969/cloud-file-store/utils"
+	"github.com/redis/go-redis/v9"
 )
 
 type UserHandler struct {
-	DB *sql.DB
+	DB          *sql.DB
+	RedisClient *redis.Client
 }
 
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +85,18 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	tokenStringForRefresh, err := utils.CreateToken(user.UUID.String(), 10)
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	requestCtx := r.Context()
+	redisOpCtx, cancel := context.WithTimeout(requestCtx, 5*time.Second)
+	defer cancel()
+
+	key := user.UUID.String() + ":refresh"
+	err = h.RedisClient.Set(redisOpCtx, key, tokenStringForRefresh, 1*time.Hour).Err()
+	if err != nil {
+		log.Printf("Error saving refresh token to Redis: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -162,6 +177,18 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SetAuthCookie(w, tokenStringForAccess, tokenStringForRefresh)
+
+	requestCtx := r.Context()
+	redisOpCtx, cancel := context.WithTimeout(requestCtx, 5*time.Second)
+	defer cancel()
+
+	key := "refresh:" + storedUser.UUID.String()
+	err = h.RedisClient.Set(redisOpCtx, key, tokenStringForRefresh, 1*time.Hour).Err()
+	if err != nil {
+		log.Printf("Error saving refresh token to Redis: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -259,6 +286,7 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error encoding user info to JSON: %v", err)
 	}
 }
+
 func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 	var password models.Password
 
@@ -274,7 +302,7 @@ func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := h.DB.QueryRow("SELECT username, password_hash, email, secret_key FROM users WHERE uuid = $1", userId)
+	row := h.DB.QueryRow("SELECT username, password_hash, email, secret_key FROM users WHERE uuid = $1", &userId)
 
 	var user models.UserForSecretKey
 	if err := row.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.SecretKey); err != nil {

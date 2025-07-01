@@ -15,7 +15,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-var jwtKey = []byte(os.Getenv("ACCESS_JWT_TOKEN_SECRET"))
+var jwtKey = []byte(os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET"))
 
 func SetAuthCookie(w http.ResponseWriter, tokenStringForAccess string, tokenStringForRefresh string) {
 
@@ -49,12 +49,6 @@ func CreateToken(userID string, days time.Duration) (string, error) {
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			// You can add other standard claims here if needed:
-			// IssuedAt:  jwt.NewNumericDate(time.Now()),
-			// Issuer:    "your-app-name",
-			// Subject:   userID, // Typically the same as UserID
-			// Audience:  []string{"web-app", "mobile-app"},
-
 		},
 	}
 
@@ -70,7 +64,7 @@ func CreateToken(userID string, days time.Duration) (string, error) {
 
 func ParseToken(tokenString string) (*Claims, error) {
 
-	var jwtKey = []byte(os.Getenv("ACCESS_JWT_TOKEN_SECRET"))
+	var jwtKey = []byte(os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET"))
 
 	if len(jwtKey) == 0 {
 		return nil, fmt.Errorf("JWT secret key not initialized")

@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/ravigill3969/cloud-file-store/database"
 	"github.com/ravigill3969/cloud-file-store/handlers"
@@ -35,6 +36,18 @@ func main() {
 		}
 		fmt.Println("Database connection closed.")
 	}()
+
+	redisURL := os.Getenv("UPSTASH_REDIS_URL")
+	if redisURL == "" {
+		log.Fatal("UPSTASH_REDIS_URL is required")
+	}
+
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Fatalf("Invalid Upstash Redis URL: %v", err)
+	}
+
+	redisClient := redis.NewClient(opt)
 
 	PORT := os.Getenv("PORT")
 	if PORT == "" {
@@ -71,7 +84,10 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	userHandler := &handlers.UserHandler{DB: db}
+	userHandler := &handlers.UserHandler{
+		DB:          db,
+		RedisClient: redisClient,
+	}
 	fileHandler := &handlers.FileHandler{
 		DB:         db,
 		S3Uploader: s3Uploader,
