@@ -27,3 +27,11 @@ type UserForFileUpload struct {
 	StorageQuotaMB int    `json:"storage_quota_mb"`
 	SecretKey      string `json:"secret_key"`
 }
+
+// url, original_filename, id
+
+type UploadFile struct {
+	URL              string    `json:"url"`
+	OriginalFilename string    `json:"original_filename"`
+	Id               uuid.UUID `json:"id"`
+}

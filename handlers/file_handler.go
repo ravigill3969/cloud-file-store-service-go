@@ -55,7 +55,41 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + fileHeader.Filename
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	row := fh.DB.QueryRow("SELECT username, email, public_key, secret_key ,account_type, max_api_calls, storage_used_mb, storage_quota_mb FROM users WHERE uuid = $1", &userID)
+
+	var user models.UserForFileUpload
+
+	err = row.Scan(
+		&user.Username,
+		&user.Email,
+		&user.PublicKey,
+		&user.SecretKey,
+		&user.AccountType,
+		&user.MaxAPICall,
+		&user.StorageUsedMB,
+		&user.StorageQuotaMB,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("User not found for ID: %s", userID)
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
+			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + fileHeader.Filename + user.SecretKey
 
 	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), key)
 	if err != nil {
@@ -91,45 +125,24 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
 
-	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	query := `INSERT INTO images (user_id , s3_key, original_filename, mime_type, file_size_bytes, url ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING url, original_filename, id`
 
-	if !ok {
-		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
-		return
-	}
+	var fileUpload models.UploadFile
 
-	row := fh.DB.QueryRow("SELECT username, email, public_key, secret_key ,account_type, max_api_calls, storage_used_mb, storage_quota_mb FROM users WHERE uuid = $1", &userID)
-
-	var user models.UserForFileUpload
-
-	err = row.Scan(
-		&user.Username,
-		&user.Email,
-		&user.PublicKey,
-		&user.AccountType,
-		&user.MaxAPICall,
-		&user.StorageUsedMB,
-		&user.StorageQuotaMB,
-		&user.SecretKey,
-	)
+	err = fh.DB.QueryRow(query, userID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL).Scan(&fileUpload.URL, &fileUpload.OriginalFilename, &fileUpload.Id)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			log.Printf("User not found for ID: %s", userID)
-			http.Error(w, "User not found", http.StatusNotFound)
-		} else {
-			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
-			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
-		}
+		http.Error(w, "Unable to save data", http.StatusInternalServerError)
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": "File uploaded successfully",
-		"url":     fileURL,
-	})
+
+	if err := json.NewEncoder(w).Encode(fileUpload); err != nil {
+		log.Printf("Error encoding user info to JSON: %v", err)
+	}
+
 }
 
 func (fh *FileHandler) CreatePresignedUploadRequest(fileName, contentType string, key string) (*string, error) {
