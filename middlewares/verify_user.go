@@ -2,9 +2,9 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/ravigill3969/cloud-file-store/utils"
 )
@@ -29,14 +29,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 
 		tokenString := cookie.Value
 
-		claims, err := utils.ParseToken(tokenString)
+		jwtKey := os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET")
+
+		claims, err := utils.ParseToken(tokenString, []byte(jwtKey))
 		if err != nil {
 			log.Printf("Auth failed: Invalid or expired token: %v", err)
 			http.Error(w, "Unauthorized: Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
-
-		fmt.Println(claims)
 
 		ctx := context.WithValue(r.Context(), UserIDContextKey, claims.UserID)
 		r = r.WithContext(ctx)

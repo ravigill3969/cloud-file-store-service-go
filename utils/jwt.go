@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -14,8 +13,6 @@ type Claims struct {
 	UserID string `json:"user_id"`
 	jwt.RegisteredClaims
 }
-
-var jwtKey = []byte(os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET"))
 
 func SetAuthCookie(w http.ResponseWriter, tokenStringForAccess string, tokenStringForRefresh string) {
 
@@ -42,7 +39,7 @@ func SetAuthCookie(w http.ResponseWriter, tokenStringForAccess string, tokenStri
 	})
 }
 
-func CreateToken(userID string, days time.Duration) (string, error) {
+func CreateToken(userID string, days time.Duration, jwtKey []byte) (string, error) {
 	expirationTime := time.Now().Add(24 * days * time.Hour)
 
 	claims := &Claims{
@@ -62,9 +59,7 @@ func CreateToken(userID string, days time.Duration) (string, error) {
 	return tokenString, nil
 }
 
-func ParseToken(tokenString string) (*Claims, error) {
-
-	var jwtKey = []byte(os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET"))
+func ParseToken(tokenString string, jwtKey []byte) (*Claims, error) {
 
 	if len(jwtKey) == 0 {
 		return nil, fmt.Errorf("JWT secret key not initialized")
@@ -72,7 +67,12 @@ func ParseToken(tokenString string) (*Claims, error) {
 
 	parsedClaims := &Claims{}
 
-	token, err := jwt.ParseWithClaims(tokenString, parsedClaims, keyFunc, jwt.WithLeeway(5*time.Second))
+	token, err := jwt.ParseWithClaims(tokenString, parsedClaims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return jwtKey, nil
+	}, jwt.WithLeeway(5*time.Second))
 
 	if err != nil {
 		switch {
@@ -124,11 +124,4 @@ func ParseToken(tokenString string) (*Claims, error) {
 	}
 
 	return finalClaims, nil
-}
-
-func keyFunc(token *jwt.Token) (interface{}, error) {
-	if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-		return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-	}
-	return jwtKey, nil
 }

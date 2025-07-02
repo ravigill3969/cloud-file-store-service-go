@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
@@ -75,14 +76,18 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		PublicKey: publicKey,
 	}
 
-	tokenStringForAccess, err := utils.CreateToken(user.UUID.String(), 3)
+	accessJWTKey := os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET")
+
+	tokenStringForAccess, err := utils.CreateToken(user.UUID.String(), 3, []byte(accessJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	tokenStringForRefresh, err := utils.CreateToken(user.UUID.String(), 10)
+	refreshJWTKey := os.Getenv("ACCESS_JWT_REFRESH_TOKEN_SECRET")
+
+	tokenStringForRefresh, err := utils.CreateToken(user.UUID.String(), 10, []byte(refreshJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -162,16 +167,20 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenStringForAccess, err := utils.CreateToken(storedUser.UUID.String(), 3)
+	accessJWTKey := os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET")
+
+	tokenStringForAccess, err := utils.CreateToken(storedUser.UUID.String(), 3, []byte(accessJWTKey))
 	if err != nil {
-		log.Printf("Error creating token during login: %v", err)
+		log.Printf("Error creating token during register: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	tokenStringForRefresh, err := utils.CreateToken(storedUser.UUID.String(), 10)
+	refreshJWTKey := os.Getenv("ACCESS_JWT_REFRESH_TOKEN_SECRET")
+
+	tokenStringForRefresh, err := utils.CreateToken(storedUser.UUID.String(), 10, []byte(refreshJWTKey))
 	if err != nil {
-		log.Printf("Error creating token during login: %v", err)
+		log.Printf("Error creating token during register: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -324,4 +333,61 @@ func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(user.SecretKey); err != nil {
 		log.Printf("Error encoding secret key to JSON: %v", err)
 	}
+}
+
+func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request) {
+	refreshCookie, err := r.Cookie("refresh_token")
+
+	if err != nil {
+		if err == http.ErrNoCookie {
+			log.Println("Auth failed: No 'access_token' cookie found.")
+			http.Error(w, "Unauthorized: Authentication token required", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("Auth failed: Error reading cookie: %v", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	tokenString := refreshCookie.Value
+
+	refreshJWTKey := os.Getenv("ACCESS_JWT_REFRESH_TOKEN_SECRET")
+
+	claims, err := utils.ParseToken(tokenString, []byte(refreshJWTKey))
+
+	fmt.Println(refreshJWTKey)
+
+	if err != nil {
+		log.Printf("Invalid refresh token: %v", err)
+		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	userID := claims.UserID
+
+	accessJWTKey := os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET")
+
+	accessToken, err := utils.CreateToken(userID, 24*time.Hour*3, []byte(accessJWTKey))
+	if err != nil {
+		log.Printf("Error creating token during refresh check access token: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	refreshToken, err := utils.CreateToken(userID, 24*time.Hour*3, []byte(refreshJWTKey))
+	if err != nil {
+		log.Printf("Error creating token during refresh check refresh token: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	utils.SetAuthCookie(w, accessToken, refreshToken)
+
+	w.WriteHeader(http.StatusOK)
+	w.Header().Add("Content-type", "application/json")
+
+	utils.SendJSON(w, http.StatusOK, map[string]string{
+		userID: userID,
+	})
+
 }

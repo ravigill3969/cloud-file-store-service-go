@@ -13,4 +13,5 @@ func RegisterUserRoutes(mux *http.ServeMux, uh *handlers.UserHandler) {
 	mux.HandleFunc("GET /api/users/logout", uh.Logout)
 	mux.HandleFunc("POST /api/users/register", uh.Register)
 	mux.HandleFunc("POST /api/users/login", uh.Login)
+	mux.HandleFunc("GET /api/users/refresh-token", uh.RefreshTokenVerify)
 }
