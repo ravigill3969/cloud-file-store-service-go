@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -89,7 +90,7 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + fileHeader.Filename + user.SecretKey
+	key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + user.SecretKey + "_" + fileHeader.Filename
 
 	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), key)
 	if err != nil {
@@ -105,7 +106,8 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reqHttp.Header.Set("Content-Type", fileHeader.Header.Get("Content-Type"))
+	reqHttp.Header.Set("Content-Type", fileHeader.Header.
+		Get("Content-Type"))
 
 	client := &http.Client{}
 	resp, err := client.Do(reqHttp)
@@ -158,4 +160,135 @@ func (fh *FileHandler) CreatePresignedUploadRequest(fileName, contentType string
 	}
 
 	return &urlStr, nil
+}
+
+func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		fmt.Println("ParseMultipartForm error:", err)
+		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
+		return
+	}
+
+	file, fileHeader, err := r.FormFile("file")
+	if err != nil {
+		fmt.Println("FormFile error:", err)
+		http.Error(w, "File not provided", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	if fileHeader.Filename == "" {
+		fmt.Println("Empty filename")
+		http.Error(w, "Filename missing in upload", http.StatusBadRequest)
+		return
+	}
+
+	path := r.URL.Path
+
+	parsedURL := strings.Split(path, "/")
+
+	// /api/file/{secretKey}/secure/{publicKey}
+	if len(parsedURL) != 6 && parsedURL[1] != "api" && parsedURL[4] != "secure" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	secretKey := parsedURL[3]
+	publicKey := parsedURL[5]
+
+	row := fh.DB.QueryRow("SELECT uuid, username, email, public_key, secret_key  FROM users WHERE public_key = $1", &publicKey)
+
+	var user models.SecretKeyUploadUser
+
+	// var SecretKeyUploadUser struct {
+	// 	ID        uuid.UUID `json:"id"`
+	// 	PublicKey string    `json:"public_key"`
+	// 	SecretKey string    `json:"secret_key"`
+	// 	Username  string    `json:"username"`
+	// 	Email     string    `json:"email"`
+	// }
+
+	err = row.Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.PublicKey,
+		&user.SecretKey,
+	)
+
+	if err != nil {
+		http.Error(w, "Invalid public key", http.StatusUnauthorized)
+		return
+	}
+
+	if secretKey != user.SecretKey {
+		http.Error(w, "Invalid public key", http.StatusUnauthorized)
+
+		return
+	}
+
+	key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + user.SecretKey + "_" + fileHeader.Filename
+
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		fmt.Println("ReadAll error:", err)
+		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		return
+	}
+
+	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-type"), key)
+
+	if err != nil {
+		fmt.Println("Presigned URL generation error:", err)
+		http.Error(w, "Failed to generate presigned URL: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	reqHttp, err := http.NewRequest("PUT", *presignedURL, bytes.NewReader(fileBytes))
+	if err != nil {
+		fmt.Println("NewRequest error:", err)
+		http.Error(w, "Failed to create PUT request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	reqHttp.Header.Set("Content-Type", fileHeader.Header.
+		Get("Content-Type"))
+
+	client := &http.Client{}
+	resp, err := client.Do(reqHttp)
+	if err != nil {
+		fmt.Println("HTTP PUT request error:", err)
+		http.Error(w, "Failed to upload file to S3", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Println("S3 Response error:", resp.Status, string(bodyBytes))
+		http.Error(w, "Failed to upload file to S3", http.StatusInternalServerError)
+		return
+	}
+
+	fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
+
+	query := `INSERT INTO images (user_id , s3_key, original_filename, mime_type, file_size_bytes, url ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING url, original_filename, id`
+
+	var fileUpload models.UploadFile
+
+	err = fh.DB.QueryRow(query, user.ID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL).Scan(&fileUpload.URL, &fileUpload.OriginalFilename, &fileUpload.Id)
+
+	if err != nil {
+		http.Error(w, "Unable to save data", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(fileUpload); err != nil {
+		log.Printf("Error encoding user info to JSON: %v", err)
+	}
+
 }

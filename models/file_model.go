@@ -35,3 +35,11 @@ type UploadFile struct {
 	OriginalFilename string    `json:"original_filename"`
 	Id               uuid.UUID `json:"id"`
 }
+
+type SecretKeyUploadUser struct {
+	ID        uuid.UUID `json:"id"`
+	PublicKey string    `json:"public_key"`
+	SecretKey string    `json:"secret_key"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+}
