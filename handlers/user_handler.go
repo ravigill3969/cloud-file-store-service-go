@@ -391,3 +391,21 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 	})
 
 }
+
+func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
+	var secretKey string
+
+	if err := json.NewDecoder(r.Body).Decode(&secretKey); err != nil {
+		http.Error(w, "Secret key is required", http.StatusBadRequest)
+		return
+	}
+
+	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	h.DB.QueryRow(`SELECT secret_key, `)
+}
