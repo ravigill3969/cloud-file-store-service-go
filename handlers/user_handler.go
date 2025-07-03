@@ -217,6 +217,26 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
+	redisCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+
+	defer cancel()
+
+	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	redisKey := fmt.Sprintf("refresh:" + userId)
+	err := h.RedisClient.Del(redisCtx, redisKey).Err()
+
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	logOutResponse := models.LogoutRes{
 		Message: "Logged out successfully!",
 		Status:  "ok",
@@ -244,7 +264,7 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	err := json.NewEncoder(w).Encode(logOutResponse)
+	err = json.NewEncoder(w).Encode(logOutResponse)
 
 	if err != nil {
 		log.Printf("Error encoding logout response to JSON: %v", err)
@@ -453,4 +473,62 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
+	err := updateUserPasswordLogic(h.DB, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Password updated successfully"))
+}
+
+func updateUserPasswordLogic(db *sql.DB, r *http.Request) error {
+	type Body struct {
+		Password           string `json:"password"`
+		NewPassword        string `json:"new_password"`
+		ConfirmNewPassword string `json:"confirm_new_password"`
+	}
+
+	var body Body
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return fmt.Errorf("invalid request body")
+	}
+
+	if body.NewPassword != body.ConfirmNewPassword {
+		return fmt.Errorf("new password and confirmation do not match")
+	}
+
+	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok {
+		return fmt.Errorf("unauthorized")
+	}
+
+	var hashedPassword string
+	err := db.QueryRow(`SELECT password_hash FROM users WHERE uuid = $1`, userId).Scan(&hashedPassword)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("user not found")
+		}
+		return fmt.Errorf("internal server error")
+	}
+
+	if !utils.CheckPasswordHash(body.Password, hashedPassword) {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	newHashedPassword, err := utils.HashPassword(body.NewPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash new password")
+	}
+
+	_, err = db.Exec(`UPDATE users SET password_hash = $1 WHERE uuid = $2`, newHashedPassword, userId)
+	if err != nil {
+		return fmt.Errorf("failed to update password")
+	}
+
+	return nil
 }

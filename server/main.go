@@ -95,8 +95,8 @@ func main() {
 		S3Bucket:   bucket,
 	}
 
-	routes.RegisterUserRoutes(mux, userHandler)
-	routes.FileRoutes(mux, fileHandler)
+	routes.RegisterUserRoutes(mux, userHandler, redisClient)
+	routes.FileRoutes(mux, fileHandler, redisClient)
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")

@@ -5,13 +5,18 @@ import (
 
 	"github.com/ravigill3969/cloud-file-store/handlers"
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
+	"github.com/redis/go-redis/v9"
 )
 
-func RegisterUserRoutes(mux *http.ServeMux, uh *handlers.UserHandler) {
-	mux.Handle("GET /api/users/get-user", middleware.AuthMiddleware(http.HandlerFunc(uh.GetUserInfo)))
-	mux.Handle("POST /api/users/get-secret-key", middleware.AuthMiddleware(http.HandlerFunc(uh.GetSecretKey)))
-	mux.Handle("PATCH /api/users/update-secret-key", middleware.AuthMiddleware(http.HandlerFunc(uh.UpdateSecretKey)))
-	mux.HandleFunc("GET /api/users/logout", uh.Logout)
+func RegisterUserRoutes(mux *http.ServeMux, uh *handlers.UserHandler, redis *redis.Client) {
+	authMw := &middleware.RedisStruct{
+		RedisClient: redis,
+	}
+
+	mux.Handle("GET /api/users/get-user", authMw.AuthMiddleware((http.HandlerFunc(uh.GetUserInfo))))
+	mux.Handle("POST /api/users/get-secret-key", authMw.AuthMiddleware((http.HandlerFunc(uh.GetSecretKey))))
+	mux.Handle("PATCH /api/users/update-secret-key", authMw.AuthMiddleware((http.HandlerFunc(uh.UpdateSecretKey))))
+	mux.Handle("GET /api/users/logout", authMw.AuthMiddleware((http.HandlerFunc(uh.Logout))))
 	mux.HandleFunc("POST /api/users/register", uh.Register)
 	mux.HandleFunc("POST /api/users/login", uh.Login)
 	mux.HandleFunc("GET /api/users/refresh-token", uh.RefreshTokenVerify)
