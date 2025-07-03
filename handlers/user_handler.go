@@ -394,8 +394,8 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 
 func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-	SecretKey string `json:"secretKey"`
-}
+		SecretKey string `json:"secretKey"`
+	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Secret key is required", http.StatusBadRequest)
