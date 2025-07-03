@@ -92,6 +92,15 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + user.SecretKey + "_" + fileHeader.Filename
 
+	contentType := fileHeader.Header.Get("Content-Type")
+
+	err = validateContentType(contentType)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnsupportedMediaType)
+		return
+	}
+
 	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), key)
 	if err != nil {
 		fmt.Println("Presigned URL generation error:", err)
@@ -237,7 +246,16 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-type"), key)
+	contentType := fileHeader.Header.Get("Content-Type")
+
+	err = validateContentType(contentType)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnsupportedMediaType)
+		return
+	}
+
+	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, contentType, key)
 
 	if err != nil {
 		fmt.Println("Presigned URL generation error:", err)
@@ -291,4 +309,15 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		log.Printf("Error encoding user info to JSON: %v", err)
 	}
 
+}
+
+func validateContentType(contentType string) error {
+	allowedTypes := []string{"image/jpeg", "image/png", "image/gif"}
+
+	for _, t := range allowedTypes {
+		if contentType == t {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported image format: %s", contentType)
 }
