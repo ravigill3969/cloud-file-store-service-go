@@ -375,8 +375,6 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 
 	claims, err := utils.ParseToken(tokenString, []byte(refreshJWTKey))
 
-	fmt.Println(refreshJWTKey)
-
 	if err != nil {
 		log.Printf("Invalid refresh token: %v", err)
 		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
@@ -394,11 +392,23 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	refreshToken, err := utils.CreateToken(userID, 24*time.Hour*3, []byte(refreshJWTKey))
+	refreshToken, err := utils.CreateToken(userID, 24*time.Hour*30, []byte(refreshJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during refresh check refresh token: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
+	}
+
+	redisCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+
+	defer cancel()
+
+	redisKey := fmt.Sprintf("refresh:" + userID)
+
+	err = h.RedisClient.Set(redisCtx, redisKey, refreshToken, 24*time.Hour*30).Err()
+
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 
 	utils.SetAuthCookie(w, accessToken, refreshToken)
