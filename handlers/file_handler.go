@@ -321,3 +321,53 @@ func validateContentType(contentType string) error {
 	}
 	return fmt.Errorf("unsupported image format: %s", contentType)
 }
+
+func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
+	parsedURL := strings.Split(r.URL.Path, "/")
+	// /api/file/{id}/{publicKey}
+
+	publicKey := parsedURL[4]
+	photoID := parsedURL[3]
+
+	fmt.Println(photoID)
+
+	if publicKey == "" {
+		http.Error(w, "Invalid public key", http.StatusBadRequest)
+		return
+	}
+
+	if photoID == "" {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	row := fh.DB.QueryRow(`SELECT url FROM images WHERE id = $1`, photoID)
+
+	var url string
+
+	err := row.Scan(
+		&url,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid image id", http.StatusBadRequest)
+		} else {
+			http.Error(w, "Image not found", http.StatusNotFound)
+
+		}
+		return
+	}
+
+	resp, err := http.Get(url)
+
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp.Body)
+
+}

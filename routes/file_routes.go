@@ -14,4 +14,5 @@ func FileRoutes(mux *http.ServeMux, fh *handlers.FileHandler, redis *redis.Clien
 	}
 	mux.Handle("POST /api/file/upload", authMw.AuthMiddleware(http.HandlerFunc(fh.UploadFile)))
 	mux.HandleFunc("POST /api/file/{secretKey}/secure/{publicKey}", fh.UploadAsThirdParty)
+	mux.HandleFunc("GET /api/file/{id}/{publicKey}", fh.ServeFileWithID)
 }
