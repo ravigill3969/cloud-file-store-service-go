@@ -393,19 +393,64 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
-	var secretKey string
+	var body struct {
+	SecretKey string `json:"secretKey"`
+}
 
-	if err := json.NewDecoder(r.Body).Decode(&secretKey); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "Secret key is required", http.StatusBadRequest)
 		return
 	}
 
-	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 	if !ok {
 		log.Printf("Error: User ID not found in context")
 		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
 		return
 	}
 
-	h.DB.QueryRow(`SELECT secret_key, `)
+	row := h.DB.QueryRow("SELECT username, password_hash, email, secret_key FROM users WHERE uuid = $1", &userID)
+
+	var user models.UserForSecretKey
+	if err := row.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.SecretKey); err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("User not found for ID: %s", userID)
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
+			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if user.SecretKey != body.SecretKey {
+		http.Error(w, "Invalid secret key", http.StatusBadRequest)
+		return
+	}
+
+	newSecretKey, err := utils.GenerateKey(32)
+
+	if err != nil {
+		http.Error(w, "Unable to create new secret key", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = h.DB.Exec(`UPDATE users SET secret_key = $1 WHERE uuid = $2`, &newSecretKey, &userID)
+
+	if err != nil {
+		http.Error(w, "Unable to update secret key", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Header().Add("Content-type", "application/json")
+
+	err = json.NewEncoder(w).Encode(map[string]string{
+		"message": "Secret key updated",
+	})
+	if err != nil {
+		log.Println("Failed to encode JSON response:", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 }
