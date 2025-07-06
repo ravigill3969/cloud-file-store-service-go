@@ -377,7 +377,10 @@ func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
+	parsedURL := strings.Split(r.URL.Path, "/")
+	// /api/file/edit/{id}/{publicKey}
+	id := parsedURL[4]
+
 	widthStr := r.URL.Query().Get("width")
 	heightStr := r.URL.Query().Get("height")
 
@@ -406,7 +409,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	err = fh.DB.QueryRow(`
     SELECT 
-        id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1 `, &id).Scan(
+        id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1 `, id).Scan(
 		&image.ID,
 		&image.UserID,
 		&image.S3Key,
@@ -435,8 +438,16 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 			"url": image.URL,
 		})
 	}
+	str, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 
-	// url, err = LamdaMagicHere(image.S3Key, widthStr, heightStr)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK, map[string]string{
+		"url": str,
+	})
 
 }
 
@@ -447,6 +458,7 @@ func LamdaMagicHere(key, width, height string) (string, error) {
 	}
 
 	params := url.Values{}
+	params.Add("action", "edit")
 	params.Add("bucketName", os.Getenv("AWS_BUCKET_NAME"))
 	params.Add("bucketEdit", os.Getenv("AWS_BUCKET_EDIT_NAME"))
 	params.Add("region", os.Getenv("AWS_REGION"))
@@ -454,26 +466,32 @@ func LamdaMagicHere(key, width, height string) (string, error) {
 	params.Add("width", width)
 	params.Add("height", height)
 
+	fmt.Println(baseURL)
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 
 	resp, err := http.Post(fullURL, "application/json", nil)
+	
+	fmt.Println("2")
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
+	fmt.Println(resp.Body)
+	
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("bad response status: %s", resp.Status)
 	}
-
+	
+	
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	// Assuming Lambda returns edited image URL as plain text or JSON
-	// If JSON, parse it accordingly; here assuming plain URL string:
 	editedURL := string(bodyBytes)
+
+	fmt.Println(editedURL)
 
 	return editedURL, nil
 }
