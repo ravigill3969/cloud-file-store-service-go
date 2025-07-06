@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,8 +18,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager/s3manageriface"
+	"github.com/google/uuid"
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/models"
+	"github.com/ravigill3969/cloud-file-store/utils"
 )
 
 type FileHandler struct {
@@ -370,4 +374,106 @@ func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	io.Copy(w, resp.Body)
 
+}
+
+func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	widthStr := r.URL.Query().Get("width")
+	heightStr := r.URL.Query().Get("height")
+
+	widthInt, err := strconv.Atoi(widthStr)
+	heightInt, errH := strconv.Atoi(heightStr)
+
+	if err != nil || errH != nil {
+		http.Error(w, "Width and height is required", http.StatusBadRequest)
+		return
+	}
+
+	type Image struct {
+		ID               uuid.UUID `json:"id"`
+		UserID           uuid.UUID `json:"user_id"`
+		S3Key            string    `json:"s3_key"`
+		OriginalFilename string    `json:"original_filename"`
+		MimeType         string    `json:"mime_type"`
+		FileSize         int64     `json:"file_size_bytes"`
+		UploadDate       time.Time `json:"upload_date"`
+		Width            int16     `json:"width"`
+		Height           int16     `json:"height"`
+		URL              string    `json:"url"`
+	}
+
+	var image Image
+
+	err = fh.DB.QueryRow(`
+    SELECT 
+        id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1 `, &id).Scan(
+		&image.ID,
+		&image.UserID,
+		&image.S3Key,
+		&image.OriginalFilename,
+		&image.MimeType,
+		&image.FileSize,
+		&image.UploadDate,
+		&image.Width,
+		&image.Height,
+		&image.URL,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Not found", http.StatusNotFound)
+
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if widthInt == int(image.Width) && heightInt == int(image.Height) {
+		utils.SendJSON(w, http.StatusOK, map[string]string{
+			"id":  image.ID.String(),
+			"url": image.URL,
+		})
+	}
+
+	// url, err = LamdaMagicHere(image.S3Key, widthStr, heightStr)
+
+}
+
+func LamdaMagicHere(key, width, height string) (string, error) {
+	baseURL := os.Getenv("AWS_LAMBDA")
+	if baseURL == "" {
+		return "", fmt.Errorf("AWS_LAMBDA env var not set")
+	}
+
+	params := url.Values{}
+	params.Add("bucketName", os.Getenv("AWS_BUCKET_NAME"))
+	params.Add("bucketEdit", os.Getenv("AWS_BUCKET_EDIT_NAME"))
+	params.Add("region", os.Getenv("AWS_REGION"))
+	params.Add("key", key)
+	params.Add("width", width)
+	params.Add("height", height)
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+
+	resp, err := http.Post(fullURL, "application/json", nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("bad response status: %s", resp.Status)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// Assuming Lambda returns edited image URL as plain text or JSON
+	// If JSON, parse it accordingly; here assuming plain URL string:
+	editedURL := string(bodyBytes)
+
+	return editedURL, nil
 }
