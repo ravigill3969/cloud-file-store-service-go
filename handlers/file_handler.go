@@ -445,6 +445,28 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 		return
 	}
 
+	query := `
+		INSERT INTO images (
+			id, user_id, s3_key, original_filename,
+			mime_type, file_size_bytes, upload_date,
+			url, width, height
+		) VALUES (
+			$1, $2, $3, $4,
+			$5, $6, $7,
+			$8, $9, $10
+		)
+	`
+	_, err = fh.DB.Exec(query,
+		image.ID, image.UserID, image.S3Key, image.OriginalFilename,
+		image.MimeType, image.FileSize, image.UploadDate,
+		image.URL, image.Width, image.Height,
+	)
+
+	if err != nil {
+		http.Error(w, "Unable to save, if issue persist contact here", http.StatusInternalServerError)
+		return
+	}
+
 	utils.SendJSON(w, http.StatusOK, map[string]string{
 		"url": str,
 	})
@@ -470,7 +492,7 @@ func LamdaMagicHere(key, width, height string) (string, error) {
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 
 	resp, err := http.Post(fullURL, "application/json", nil)
-	
+
 	fmt.Println("2")
 	if err != nil {
 		return "", err
@@ -478,12 +500,11 @@ func LamdaMagicHere(key, width, height string) (string, error) {
 	defer resp.Body.Close()
 
 	fmt.Println(resp.Body)
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("bad response status: %s", resp.Status)
 	}
-	
-	
+
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
