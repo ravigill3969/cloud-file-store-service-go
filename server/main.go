@@ -102,9 +102,9 @@ func main() {
 		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")
 	})
 
-	middleware := middleware.CORS(mux)
+	middleware := middleware.CORS(middleware.SetCommonHeaders(mux))
 
 	fmt.Printf("TLS server is running on http://localhost:%s\n", PORT)
 
-	log.Fatal(http.ListenAndServeTLS(":"+PORT, "cert.pem", "key.pem", middleware))
+	log.Fatal(http.ListenAndServeTLS(":"+PORT, "cert.pem", "key.pem" , middleware))
 }
