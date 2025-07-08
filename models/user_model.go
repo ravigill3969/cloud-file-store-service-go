@@ -10,7 +10,7 @@ type User struct {
 	UUID           uuid.UUID `db:"uuid" json:"uuid"`
 	Username       string    `db:"username" json:"username"`
 	Email          string    `db:"email" json:"email"`
-	PasswordHash   string    `db:"password_hash" json:"password_hash"`
+	PasswordHash   string    `db:"password_hash" json:"password"`
 	PublicKey      string    `db:"public_key" json:"public_key"`
 	SecretKey      string    `db:"secret_key" json:"-"`
 	AccountType    string    `db:"account_type" json:"account_type"`

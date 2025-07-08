@@ -20,7 +20,7 @@ func SendJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 
 	resp := JSONResponse{
 		Status: "success",
-		Data:   data,
+		Data: data,
 	}
 
 	if err := json.NewEncoder(w).Encode(resp); err != nil {

@@ -13,7 +13,7 @@ func FileRoutes(mux *http.ServeMux, fh *handlers.FileHandler, redis *redis.Clien
 		RedisClient: redis,
 	}
 	mux.Handle("POST /api/file/upload", authMw.AuthMiddleware(http.HandlerFunc(fh.UploadFile)))
-	mux.HandleFunc("POST /api/file/upload/{secretKey}/secure/{publicKey}", fh.UploadAsThirdParty)
-	mux.HandleFunc("POST /api/file/edit/{id}/{publicKey}", fh.GetFileEditStoreInS3ThenInPsqlWithWidthAndSize)
 	mux.HandleFunc("GET /api/file/get/{id}/{publicKey}/secure/{secretKey}", fh.ServeFileWithID)
+	mux.HandleFunc("POST /api/file/upload/{publicKey}/secure/{secretKey}", fh.UploadAsThirdParty)
+	mux.HandleFunc("POST /api/file/edit/{id}/{publicKey}/secure/{secretKey}", fh.GetFileEditStoreInS3ThenInPsqlWithWidthAndSize)
 }

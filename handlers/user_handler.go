@@ -30,6 +30,11 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println(user.Username)
+	fmt.Println(user.Email)
+	fmt.Println(user.PasswordHash)
+	
+
 	if user.Username == "" || user.Email == "" || user.PasswordHash == "" {
 		http.Error(w, "username , email , password are required", http.StatusBadRequest)
 		return

@@ -188,6 +188,14 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		http.Error(w, "File not provided", http.StatusBadRequest)
 		return
 	}
+
+	const maxSizeBytes = 5 * 1024 * 1024 
+
+	if fileHeader.Size > maxSizeBytes {
+		http.Error(w, "Image size exceeds 5MB limit", http.StatusBadRequest)
+		return
+	}
+
 	defer file.Close()
 
 	if fileHeader.Filename == "" {
@@ -410,8 +418,17 @@ func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 
 func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
-	// /api/file/edit/{id}/{publicKey}
-	id := parsedURL[4]
+
+	// /api/file/edit/{id}/{publicKey}/secure/{secretKey}
+
+	if len(parsedURL) < 7 {
+		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		return
+	}
+	imageID := parsedURL[4]
+
+	publicKey := parsedURL[5]
+	secretKey := parsedURL[7]
 
 	widthStr := r.URL.Query().Get("width")
 	heightStr := r.URL.Query().Get("height")
@@ -420,7 +437,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 	heightInt, errH := strconv.Atoi(heightStr)
 
 	if err != nil || errH != nil {
-		http.Error(w, "Width and height is required", http.StatusBadRequest)
+		http.Error(w, "Width and height are required and must be integers", http.StatusBadRequest)
 		return
 	}
 
@@ -440,8 +457,8 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 	var image Image
 
 	err = fh.DB.QueryRow(`
-    SELECT 
-        id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1 `, id).Scan(
+        SELECT 
+            id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1`, imageID).Scan(
 		&image.ID,
 		&image.UserID,
 		&image.S3Key,
@@ -456,12 +473,11 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Not found", http.StatusNotFound)
-
+			http.Error(w, "Image not found", http.StatusNotFound)
 		} else {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
 		}
+		return
 	}
 
 	if widthInt == int(image.Width) && heightInt == int(image.Height) {
@@ -469,13 +485,28 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 			"id":  image.ID.String(),
 			"url": image.URL,
 		})
+		return // <--- Important to stop execution here
 	}
-	str, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 
+	str, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, "Image resize failed", http.StatusInternalServerError)
 		return
 	}
+
+	tx, err := fh.DB.Begin()
+	if err != nil {
+		log.Println("Failed to start transaction:", err)
+		http.Error(w, "Server error", http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
 
 	query := `
 		INSERT INTO images (
@@ -488,21 +519,46 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 			$8, $9, $10
 		)
 	`
-	_, err = fh.DB.Exec(query,
+
+	_, err = tx.Exec(query,
 		image.ID, image.UserID, image.S3Key, image.OriginalFilename,
 		image.MimeType, image.FileSize, image.UploadDate,
-		image.URL, image.Width, image.Height,
+		str, int16(widthInt), int16(heightInt),
 	)
-
 	if err != nil {
-		http.Error(w, "Unable to save, if issue persist contact here", http.StatusInternalServerError)
+		log.Println("Image insert failed:", err)
+		http.Error(w, "Failed to insert image", http.StatusInternalServerError)
+		return
+	}
+
+	// publicKey := parsedURL[5]
+	// secretKey := parsedURL[7]
+
+	res, err := tx.Exec(`
+		UPDATE users 
+		SET edit_api_calls = edit_api_calls - 1 
+		WHERE id = $1 AND edit_api_calls > 0 AND secret_key = $2 AND public_key = $3
+	`, image.UserID, secretKey, publicKey)
+	if err != nil {
+		log.Println("Failed to decrement edit_api_calls:", err)
+		http.Error(w, "Failed to update API quota", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		log.Println("Error checking quota update:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if rowsAffected == 0 {
+		http.Error(w, "Insufficient quota", http.StatusForbidden)
 		return
 	}
 
 	utils.SendJSON(w, http.StatusOK, map[string]string{
 		"url": str,
 	})
-
 }
 
 func LamdaMagicHere(key, width, height string) (string, error) {
