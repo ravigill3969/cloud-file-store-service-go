@@ -37,9 +37,10 @@ type UploadFile struct {
 }
 
 type SecretKeyUploadUser struct {
-	ID        uuid.UUID `json:"id"`
-	PublicKey string    `json:"public_key"`
-	SecretKey string    `json:"secret_key"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
+	ID           uuid.UUID `json:"id"`
+	PublicKey    string    `json:"public_key"`
+	SecretKey    string    `json:"secret_key"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email"`
+	PostAPICalls int16     `json:"post_api_calls"`
 }

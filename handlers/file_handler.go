@@ -177,22 +177,20 @@ func (fh *FileHandler) CreatePresignedUploadRequest(fileName, contentType string
 
 func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(10 << 20)
+
 	if err != nil {
-		fmt.Println("ParseMultipartForm error:", err)
 		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
-		fmt.Println("FormFile error:", err)
 		http.Error(w, "File not provided", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	if fileHeader.Filename == "" {
-		fmt.Println("Empty filename")
 		http.Error(w, "Filename missing in upload", http.StatusBadRequest)
 		return
 	}
@@ -201,43 +199,57 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 
 	parsedURL := strings.Split(path, "/")
 
-	// /api/file/{secretKey}/secure/{publicKey}
 	if len(parsedURL) != 6 && parsedURL[1] != "api" && parsedURL[4] != "secure" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
-	secretKey := parsedURL[3]
-	publicKey := parsedURL[5]
+	secretKey := parsedURL[4]
+	publicKey := parsedURL[6]
 
-	row := fh.DB.QueryRow("SELECT uuid, username, email, public_key, secret_key  FROM users WHERE public_key = $1", &publicKey)
+	// /api/file/upload/{secretKey}/secure/{publicKey}"
+
+	row := fh.DB.QueryRow(`WITH user_data AS (
+    SELECT uuid, public_key, secret_key, username, email
+    FROM users
+    WHERE public_key = $1
+	),
+	updated AS (
+    UPDATE users
+    SET post_api_calls = post_api_calls - 1
+    WHERE public_key = $1 AND post_api_calls > 0
+    RETURNING post_api_calls
+	)
+	SELECT u.uuid, u.public_key, u.secret_key, u.username, u.email, up.post_api_calls
+	FROM user_data u
+	JOIN updated up ON true;
+	`, publicKey)
 
 	var user models.SecretKeyUploadUser
 
-	// var SecretKeyUploadUser struct {
-	// 	ID        uuid.UUID `json:"id"`
-	// 	PublicKey string    `json:"public_key"`
-	// 	SecretKey string    `json:"secret_key"`
-	// 	Username  string    `json:"username"`
-	// 	Email     string    `json:"email"`
-	// }
-
 	err = row.Scan(
 		&user.ID,
-		&user.Username,
-		&user.Email,
 		&user.PublicKey,
 		&user.SecretKey,
+		&user.Username,
+		&user.Email,
+		&user.PostAPICalls,
 	)
+	// 	ID           uuid.UUID `json:"id"`
+	// PublicKey    string    `json:"public_key"`
+	// SecretKey    string    `json:"secret_key"`
+	// Username     string    `json:"username"`
+	// Email        string    `json:"email"`
+	// PostAPICalls int16     `json:"post_api_calls"`
 
-	if err != nil {
+	fmt.Println(err)
+
+	if user.SecretKey != "" && secretKey != user.SecretKey {
 		http.Error(w, "Invalid public key", http.StatusUnauthorized)
 		return
 	}
-
-	if secretKey != user.SecretKey {
-		http.Error(w, "Invalid public key", http.StatusUnauthorized)
-
+	if err != nil {
+		http.Error(w, "Post req limit reached for this month", http.StatusUnauthorized)
 		return
 	}
 
@@ -245,7 +257,6 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		fmt.Println("ReadAll error:", err)
 		http.Error(w, "Error reading file", http.StatusInternalServerError)
 		return
 	}
@@ -262,14 +273,12 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, contentType, key)
 
 	if err != nil {
-		fmt.Println("Presigned URL generation error:", err)
 		http.Error(w, "Failed to generate presigned URL: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	reqHttp, err := http.NewRequest("PUT", *presignedURL, bytes.NewReader(fileBytes))
 	if err != nil {
-		fmt.Println("NewRequest error:", err)
 		http.Error(w, "Failed to create PUT request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -280,7 +289,6 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	client := &http.Client{}
 	resp, err := client.Do(reqHttp)
 	if err != nil {
-		fmt.Println("HTTP PUT request error:", err)
 		http.Error(w, "Failed to upload file to S3", http.StatusInternalServerError)
 		return
 	}
@@ -328,12 +336,16 @@ func validateContentType(contentType string) error {
 
 func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
-	// /api/file/{id}/{publicKey}
+	// /api/file/get/{id}/{publicKey}/secure/{secretKey}
 
-	publicKey := parsedURL[4]
-	photoID := parsedURL[3]
+	if len(parsedURL) < 8 {
+		http.Error(w, "Invalid URL structure", http.StatusBadRequest)
+		return
+	}
 
-	fmt.Println(photoID)
+	publicKey := parsedURL[5]
+	photoID := parsedURL[4]
+	secretKey := parsedURL[7]
 
 	if publicKey == "" {
 		http.Error(w, "Invalid public key", http.StatusBadRequest)
@@ -345,11 +357,30 @@ func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := fh.DB.QueryRow(`SELECT url FROM images WHERE id = $1`, photoID)
+	row, err := fh.DB.Exec(`UPDATE users SET get_api_calls = get_api_calls - 1 WHERE public_key = $1 AND secret_key = $2 AND get_api_calls > 1 `, &publicKey, &secretKey)
+
+	if err != nil {
+		log.Printf("DB update error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+
+	}
+
+	rowsAffected, err := row.RowsAffected()
+	if err != nil {
+		http.Error(w, "Something went wrong", http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		http.Error(w, "Unable to update", http.StatusInternalServerError)
+		return
+	}
+
+	row2 := fh.DB.QueryRow(`SELECT url FROM images WHERE id = $1`, photoID)
 
 	var url string
 
-	err := row.Scan(
+	err = row2.Scan(
 		&url,
 	)
 
@@ -370,10 +401,11 @@ func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer resp.Body.Close()
+
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(http.StatusOK)
 	io.Copy(w, resp.Body)
-
 }
 
 func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
