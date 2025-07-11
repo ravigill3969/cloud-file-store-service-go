@@ -50,14 +50,15 @@ type LogoutRes struct {
 }
 
 type UserProfile struct {
-	Uuid        uuid.UUID `json:"uuid"`
-	Username    string    `json:"username"`
-	Email       string    `json:"email"`
-	PublicKey   string    `json:"public_key"`
-	AccountType string    `json:"account_type"`
-	GetAPICalls  int `json:"get_api_calls"`
-	EditAPICalls int `json:"edit_api_calls"`
-	PostAPICalls int `json:"post_api_calls"`
+	Uuid         uuid.UUID `json:"uuid"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email"`
+	PublicKey    string    `json:"public_key"`
+	AccountType  string    `json:"account_type"`
+	GetAPICalls  int       `json:"get_api_calls"`
+	EditAPICalls int       `json:"edit_api_calls"`
+	PostAPICalls int       `json:"post_api_calls"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type Password struct {

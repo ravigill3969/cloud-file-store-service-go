@@ -6,14 +6,12 @@ import (
 	"net/http"
 )
 
-// JSONResponse is a generic structure for API responses
 type JSONResponse struct {
 	Status  string      `json:"status"`
 	Message string      `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// SendJSON sends a JSON success response
 func SendJSON(w http.ResponseWriter, statusCode int, data ...interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)

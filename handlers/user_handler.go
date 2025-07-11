@@ -270,7 +270,7 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := h.DB.QueryRow("SELECT uuid, username, email, public_key, account_type, post_api_calls, get_api_calls, edit_api_calls FROM users WHERE uuid = $1", &userID)
+	row := h.DB.QueryRow("SELECT uuid, username, email, public_key, account_type, post_api_calls, get_api_calls, edit_api_calls,created_at FROM users WHERE uuid = $1", &userID)
 
 	var user models.UserProfile
 
@@ -283,6 +283,7 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		&user.PostAPICalls,
 		&user.GetAPICalls,
 		&user.EditAPICalls,
+		&user.CreatedAt,
 	)
 
 	if err != nil {
@@ -296,8 +297,6 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	utils.SendJSON(w, http.StatusOK, user)
 }
 
