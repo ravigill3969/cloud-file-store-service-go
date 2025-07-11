@@ -27,7 +27,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		log.Printf("Error decoding request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Invalid req body")
 		return
 	}
 
@@ -36,7 +36,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	fmt.Println(user.PasswordHash)
 
 	if user.Username == "" || user.Email == "" || user.PasswordHash == "" {
-		http.Error(w, "username , email , password are required", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "username, email and password are required")
 		return
 	}
 
@@ -44,21 +44,22 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("Error while hashing password: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 
 	publicKey, err := utils.GenerateKey(16)
 	if err != nil {
 		log.Printf("Error generating public key: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
+
 		return
 	}
 
 	secretKey, err := utils.GenerateKey(32)
 	if err != nil {
 		log.Printf("Error generating secret key: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 
@@ -69,21 +70,14 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 `, user.Username, user.Email, passwordHash, publicKey, secretKey).Scan(&user.UUID)
 
 	if err != nil {
-		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505"{
+		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505" {
 			log.Printf("Unique violation: %v", err)
-			utils.SendError(w, http.StatusBadRequest, "Email or username already in use")
+			utils.SendError(w, http.StatusInternalServerError, "Email or username already in use!")
 			return
 		}
 		log.Printf("Unexpected DB error: %v", err)
-		utils.SendError(w, http.StatusInternalServerError, "Something went wrong")
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
-	}
-
-	safeUser := models.SafeUser{
-		Username:  user.Username,
-		UUID:      user.UUID,
-		Email:     user.Email,
-		PublicKey: publicKey,
 	}
 
 	accessJWTKey := os.Getenv("ACCESS_JWT_ACCESS_TOKEN_SECRET")
@@ -91,7 +85,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	tokenStringForAccess, err := utils.CreateToken(user.UUID.String(), 3, []byte(accessJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 
@@ -100,7 +94,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	tokenStringForRefresh, err := utils.CreateToken(user.UUID.String(), 10, []byte(refreshJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 
@@ -112,22 +106,15 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	err = h.RedisClient.Set(redisOpCtx, key, tokenStringForRefresh, 1*time.Hour).Err()
 	if err != nil {
 		log.Printf("Error saving refresh token to Redis: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 
 	utils.SetAuthCookie(w, tokenStringForAccess, tokenStringForRefresh)
 
-	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
-	if err := json.NewEncoder(w).Encode(&safeUser); err != nil {
-		log.Printf("Error encoding registered user to JSON: %v", err)
-		http.Error(w, "Failed to encode response after registration", http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Printf("User registered successfully: %s (%s)\n", user.Username, user.UUID)
+	utils.SendJSON(w, http.StatusOK)
 }
 
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
@@ -202,26 +189,16 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	key := "refresh:" + storedUser.UUID.String()
-	err = h.RedisClient.Set(redisOpCtx, key, tokenStringForRefresh, 1*time.Hour).Err()
+	err = h.RedisClient.Set(redisOpCtx, key, tokenStringForRefresh, 24*time.Hour).Err()
 	if err != nil {
 		log.Printf("Error saving refresh token to Redis: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 
-	safeUserResponse := models.LoginRes{
-		Message: "Logged in successfully!",
-		Status:  "ok",
-	}
-
-	if err := json.NewEncoder(w).Encode(safeUserResponse); err != nil {
-		log.Printf("Error encoding login response to JSON: %v", err)
-		http.Error(w, "Failed to encode response after login", http.StatusInternalServerError)
-		return
-	}
+	utils.SendJSON(w, http.StatusOK)
 
 }
 
@@ -293,18 +270,19 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := h.DB.QueryRow("SELECT username, email, public_key, account_type, max_api_calls, storage_used_mb, storage_quota_mb FROM users WHERE uuid = $1", &userID)
+	row := h.DB.QueryRow("SELECT uuid, username, email, public_key, account_type, post_api_calls, get_api_calls, edit_api_calls FROM users WHERE uuid = $1", &userID)
 
 	var user models.UserProfile
 
 	err := row.Scan(
+		&user.Uuid,
 		&user.Username,
 		&user.Email,
 		&user.PublicKey,
 		&user.AccountType,
-		&user.MaxAPICall,
-		&user.StorageUsedMB,
-		&user.StorageQuotaMB,
+		&user.PostAPICalls,
+		&user.GetAPICalls,
+		&user.EditAPICalls,
 	)
 
 	if err != nil {
@@ -320,10 +298,7 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(user); err != nil {
-		log.Printf("Error encoding user info to JSON: %v", err)
-	}
+	utils.SendJSON(w, http.StatusOK, user)
 }
 
 func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {

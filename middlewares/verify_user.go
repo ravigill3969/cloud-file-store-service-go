@@ -63,11 +63,13 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 
 		key := fmt.Sprintf("refresh:" + claims.UserID)
 
+		fmt.Println(key)
 		requestCtx := r.Context()
 		redisOpCtx, cancel := context.WithTimeout(requestCtx, 5*time.Second)
 		defer cancel()
 
 		refreshTokenFromRedis, err := redis.RedisClient.Get(redisOpCtx, key).Result()
+
 
 
 		if err != nil {

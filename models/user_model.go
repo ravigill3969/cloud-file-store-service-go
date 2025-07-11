@@ -50,13 +50,14 @@ type LogoutRes struct {
 }
 
 type UserProfile struct {
-	Username       string `json:"username"`
-	Email          string `json:"email"`
-	PublicKey      string `json:"public_key"`
-	AccountType    string `json:"account_type"`
-	MaxAPICall     int    `json:"max_api_calls"`
-	StorageUsedMB  int    `json:"storage_used_mb"`
-	StorageQuotaMB int    `json:"storage_quota_mb"`
+	Uuid        uuid.UUID `json:"uuid"`
+	Username    string    `json:"username"`
+	Email       string    `json:"email"`
+	PublicKey   string    `json:"public_key"`
+	AccountType string    `json:"account_type"`
+	GetAPICalls  int `json:"get_api_calls"`
+	EditAPICalls int `json:"edit_api_calls"`
+	PostAPICalls int `json:"post_api_calls"`
 }
 
 type Password struct {

@@ -28,8 +28,6 @@ type UserForFileUpload struct {
 	SecretKey      string `json:"secret_key"`
 }
 
-// url, original_filename, id
-
 type UploadFile struct {
 	URL              string    `json:"url"`
 	OriginalFilename string    `json:"original_filename"`

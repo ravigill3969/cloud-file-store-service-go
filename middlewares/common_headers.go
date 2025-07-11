@@ -21,7 +21,7 @@ func SetCommonHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
 		// w.Header().Set("Access-Control-Allow-Origin", "https://localhost:5173")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
+		// w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "86400")
