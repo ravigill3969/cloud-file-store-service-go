@@ -104,7 +104,7 @@ func main() {
 
 	middleware := middleware.CORS(middleware.SetCommonHeaders(mux))
 
-	fmt.Printf("TLS server is running on http://localhost:%s\n", PORT)
+	fmt.Printf("server is running on http://localhost:%s\n", PORT)
 
-	log.Fatal(http.ListenAndServeTLS(":"+PORT, "cert.pem", "key.pem" , middleware))
+	log.Fatal(http.ListenAndServe(":"+PORT, middleware))
 }

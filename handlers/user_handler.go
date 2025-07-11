@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lib/pq"
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/models"
 	"github.com/ravigill3969/cloud-file-store/utils"
@@ -33,7 +34,6 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	fmt.Println(user.Username)
 	fmt.Println(user.Email)
 	fmt.Println(user.PasswordHash)
-	
 
 	if user.Username == "" || user.Email == "" || user.PasswordHash == "" {
 		http.Error(w, "username , email , password are required", http.StatusBadRequest)
@@ -69,8 +69,13 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 `, user.Username, user.Email, passwordHash, publicKey, secretKey).Scan(&user.UUID)
 
 	if err != nil {
-		log.Printf("Error while saving user: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505"{
+			log.Printf("Unique violation: %v", err)
+			utils.SendError(w, http.StatusBadRequest, "Email or username already in use")
+			return
+		}
+		log.Printf("Unexpected DB error: %v", err)
+		utils.SendError(w, http.StatusInternalServerError, "Something went wrong")
 		return
 	}
 

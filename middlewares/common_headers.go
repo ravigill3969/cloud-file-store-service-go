@@ -1,12 +1,10 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 )
 
 func SetCommonHeaders(next http.Handler) http.Handler {
-	fmt.Println("nigaa what in common headers")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
@@ -22,7 +20,7 @@ func SetCommonHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		w.Header().Set("Access-Control-Allow-Origin", "https://localhost:5173")
+		// w.Header().Set("Access-Control-Allow-Origin", "https://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -32,8 +30,6 @@ func SetCommonHeaders(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-
-		fmt.Println("nigaa what in common headers last")
 
 		next.ServeHTTP(w, r)
 	})
