@@ -16,7 +16,7 @@ func RegisterUserRoutes(mux *http.ServeMux, uh *handlers.UserHandler, redis *red
 	mux.Handle("GET /api/users/get-user", authMw.AuthMiddleware((http.HandlerFunc(uh.GetUserInfo))))
 	mux.Handle("POST /api/users/get-secret-key", authMw.AuthMiddleware((http.HandlerFunc(uh.GetSecretKey))))
 	mux.Handle("PATCH /api/users/update-secret-key", authMw.AuthMiddleware((http.HandlerFunc(uh.UpdateSecretKey))))
-	mux.Handle("GET /api/users/logout", authMw.AuthMiddleware((http.HandlerFunc(uh.Logout))))
+	mux.HandleFunc("GET /api/users/logout", uh.Logout)
 	mux.HandleFunc("POST /api/users/register", uh.Register)
 	mux.HandleFunc("POST /api/users/login", uh.Login)
 	mux.HandleFunc("GET /api/users/refresh-token", uh.RefreshTokenVerify)

@@ -112,8 +112,6 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	utils.SetAuthCookie(w, tokenStringForAccess, tokenStringForRefresh)
 
-	w.WriteHeader(http.StatusCreated)
-
 	utils.SendJSON(w, http.StatusOK)
 }
 
@@ -203,27 +201,6 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
-
-	redisCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-
-	defer cancel()
-
-	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
-
-	if !ok {
-		log.Printf("Error: User ID not found in context")
-		utils.SendError(w, http.StatusInternalServerError, "Unauthorized: User ID not provided")
-
-		return
-	}
-
-	redisKey := fmt.Sprintf("refresh:" + userId)
-	err := h.RedisClient.Del(redisCtx, redisKey).Err()
-
-	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
-		return
-	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
