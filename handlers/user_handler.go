@@ -212,7 +212,8 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	if !ok {
 		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusInternalServerError, "Unauthorized: User ID not provided")
+
 		return
 	}
 
@@ -220,13 +221,8 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	err := h.RedisClient.Del(redisCtx, redisKey).Err()
 
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		return
-	}
-
-	logOutResponse := models.LogoutRes{
-		Message: "Logged out successfully!",
-		Status:  "ok",
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -248,16 +244,7 @@ func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	err = json.NewEncoder(w).Encode(logOutResponse)
-
-	if err != nil {
-		log.Printf("Error encoding logout response to JSON: %v", err)
-		http.Error(w, "Failed to encode response after logout", http.StatusInternalServerError)
-		return
-	}
+	utils.SendJSON(w, http.StatusOK, "success")
 }
 
 func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
@@ -360,7 +347,7 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 
 	if err != nil {
 		log.Printf("Invalid refresh token: %v", err)
-		http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: Invalid token")
 		return
 	}
 
@@ -370,15 +357,14 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 
 	accessToken, err := utils.CreateToken(userID, 24*time.Hour*3, []byte(accessJWTKey))
 	if err != nil {
-		log.Printf("Error creating token during refresh check access token: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Internal Server Error")
 		return
 	}
 
 	refreshToken, err := utils.CreateToken(userID, 24*time.Hour*30, []byte(refreshJWTKey))
 	if err != nil {
-		log.Printf("Error creating token during refresh check refresh token: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Internal Server Error")
+
 		return
 	}
 
@@ -391,17 +377,12 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 	err = h.RedisClient.Set(redisCtx, redisKey, refreshToken, 24*time.Hour*30).Err()
 
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Internal Server Error")
 	}
 
 	utils.SetAuthCookie(w, accessToken, refreshToken)
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Add("Content-type", "application/json")
-
-	utils.SendJSON(w, http.StatusOK, map[string]string{
-		userID: userID,
-	})
+	utils.SendJSON(w, http.StatusOK)
 
 }
 

@@ -26,8 +26,7 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 
 		if err != nil {
 			if err == http.ErrNoCookie {
-				log.Println("Auth failed: No 'access_token' cookie found.")
-				http.Error(w, "Unauthorized: Authentication token required", http.StatusUnauthorized)
+				utils.SendError(w, http.StatusUnauthorized, "Unauthorized: Authentication token required")
 				return
 			}
 			log.Printf("Auth failed: Error reading cookie: %v", err)
