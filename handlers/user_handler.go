@@ -304,7 +304,8 @@ func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 	var password models.Password
 
 	if err := json.NewDecoder(r.Body).Decode(&password); err != nil {
-		http.Error(w, "Password is required", http.StatusBadRequest)
+		fmt.Println(err)
+		utils.SendError(w, http.StatusBadRequest, "Password is required")
 		return
 	}
 
@@ -334,9 +335,7 @@ func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.NewEncoder(w).Encode(user.SecretKey); err != nil {
-		log.Printf("Error encoding secret key to JSON: %v", err)
-	}
+	utils.SendJSON(w, http.StatusOK, user.SecretKey)
 }
 
 func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request) {
