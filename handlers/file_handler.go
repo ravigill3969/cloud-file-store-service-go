@@ -81,7 +81,7 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		row := fh.DB.QueryRow("SELECT username, email, public_key, secret_key ,account_type, max_api_calls, storage_used_mb, storage_quota_mb FROM users WHERE uuid = $1", &userID)
+		row := fh.DB.QueryRow("SELECT username, email, public_key, secret_key ,account_type FROM users WHERE uuid = $1", &userID)
 
 		var user models.UserForFileUpload
 
@@ -91,9 +91,6 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			&user.PublicKey,
 			&user.SecretKey,
 			&user.AccountType,
-			&user.MaxAPICall,
-			&user.StorageUsedMB,
-			&user.StorageQuotaMB,
 		)
 
 		if err != nil {
@@ -167,7 +164,7 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	utils.SendJSON(w, http.StatusOK, arr)
+	utils.SendJSON(w, http.StatusOK,arr)
 
 }
 

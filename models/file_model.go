@@ -22,9 +22,6 @@ type UserForFileUpload struct {
 	Email          string `json:"email"`
 	PublicKey      string `json:"public_key"`
 	AccountType    string `json:"account_type"`
-	MaxAPICall     int    `json:"max_api_calls"`
-	StorageUsedMB  int    `json:"storage_used_mb"`
-	StorageQuotaMB int    `json:"storage_quota_mb"`
 	SecretKey      string `json:"secret_key"`
 }
 

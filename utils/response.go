@@ -43,3 +43,5 @@ func SendError(w http.ResponseWriter, statusCode int, message string) {
 		http.Error(w, "Failed to encode error response", http.StatusInternalServerError)
 	}
 }
+
+
