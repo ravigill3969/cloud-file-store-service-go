@@ -189,7 +189,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	const maxSizeBytes = 5 * 1024 * 1024 
+	const maxSizeBytes = 5 * 1024 * 1024
 
 	if fileHeader.Size > maxSizeBytes {
 		http.Error(w, "Image size exceeds 5MB limit", http.StatusBadRequest)
@@ -603,4 +603,44 @@ func LamdaMagicHere(key, width, height string) (string, error) {
 	fmt.Println(editedURL)
 
 	return editedURL, nil
+}
+
+func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
+	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized!")
+		return
+	}
+	if userId == "" {
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized!")
+		return
+	}
+
+	rows, err := fh.DB.Query(`SELECT url FROM images WHERE user_id = $1`, userId)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Query failed!")
+		return
+	}
+	defer rows.Close()
+
+	var img models.SendAllToUserImagesUI
+
+	for rows.Next() {
+		var url string
+		err := rows.Scan(&url)
+		if err != nil {
+			utils.SendError(w, http.StatusInternalServerError, "Scan failed!")
+			return
+		}
+		img.Url = append(img.Url, url)
+	}
+
+	if err = rows.Err(); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Error reading rows!")
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK, img)
+
 }

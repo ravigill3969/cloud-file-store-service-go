@@ -42,3 +42,8 @@ type SecretKeyUploadUser struct {
 	Email        string    `json:"email"`
 	PostAPICalls int16     `json:"post_api_calls"`
 }
+
+
+type SendAllToUserImagesUI struct{
+	Url  []string  `json:"url"`
+}
