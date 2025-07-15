@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -164,7 +165,7 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	utils.SendJSON(w, http.StatusOK,arr)
+	utils.SendJSON(w, http.StatusOK, arr)
 
 }
 
@@ -650,5 +651,117 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, http.StatusOK, img)
+
+}
+
+func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		fmt.Println("ParseMultipartForm error:", err)
+		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
+		return
+	}
+
+	files := r.MultipartForm.File["file"]
+
+	if len(files) == 0 {
+		http.Error(w, "No files uploaded", http.StatusBadRequest)
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	row := fh.DB.QueryRow("SELECT username, email, public_key, secret_key ,account_type FROM users WHERE uuid = $1", &userID)
+
+	var user models.UserForFileUpload
+
+	err = row.Scan(
+		&user.Username,
+		&user.Email,
+		&user.PublicKey,
+		&user.SecretKey,
+		&user.AccountType,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("User not found for ID: %s", userID)
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
+			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	success := make(chan string, len(files))
+
+	error := make(chan error, len(files))
+
+	var wg sync.WaitGroup
+
+	for _, fileHeader := range files {
+		wg.Add(1)
+
+		go func() {
+			if fileHeader.Filename == "" {
+				error <- fmt.Errorf("Filename not defined %s", fileHeader.Filename)
+				return
+			}
+
+			file, err := fileHeader.Open()
+
+			if err != nil {
+				error <- fmt.Errorf("Unable to open file %s", fileHeader.Filename)
+				return
+			}
+
+			defer file.Close()
+
+			fileBytes, err := io.ReadAll(file)
+			if err != nil {
+				error <- fmt.Errorf("Unable to read file %s", fileHeader.Filename)
+				return
+			}
+
+			key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + user.SecretKey + "_" + fileHeader.Filename
+
+			url, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), key)
+
+			if err != nil {
+				error <- fmt.Errorf("Internal server error with file %s", fileHeader.Filename)
+				return
+			}
+
+			reqHttp, err := http.NewRequest("PUT", *url, bytes.NewReader(fileBytes))
+
+			if err != nil {
+				error <- fmt.Errorf("Internal server error with file %s", fileHeader.Filename)
+				return
+			}
+
+			reqHttp.Header.Set("Content-Type", fileHeader.Header.
+				Get("Content-Type"))
+
+			client := &http.Client{}
+
+			resp, err := client.Do(reqHttp)
+
+			if err != nil {
+				error <- fmt.Errorf("Unable to upload file %s", fileHeader.Filename)
+				return
+			}
+
+			defer resp.Body.Close()
+
+		}()
+
+	}
 
 }
