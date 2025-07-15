@@ -18,11 +18,11 @@ type Image struct {
 }
 
 type UserForFileUpload struct {
-	Username       string `json:"username"`
-	Email          string `json:"email"`
-	PublicKey      string `json:"public_key"`
-	AccountType    string `json:"account_type"`
-	SecretKey      string `json:"secret_key"`
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	PublicKey   string `json:"public_key"`
+	AccountType string `json:"account_type"`
+	SecretKey   string `json:"secret_key"`
 }
 
 type UploadFile struct {
@@ -40,7 +40,23 @@ type SecretKeyUploadUser struct {
 	PostAPICalls int16     `json:"post_api_calls"`
 }
 
+//  original_filename,mime_type,upload_date,width, height
 
-type SendAllToUserImagesUI struct{
-	Url  []string  `json:"url"`
+type SendAllToUserImagesUI struct {
+	Id              uuid.UUID    `json:"id"`
+	OriginalFilename string    `json:"original_filename"`
+	MimeType         string    `json:"mime_type"`
+	UploadDate       time.Time `json:"upload_date"`
+	Width            int       `json:"width"`
+	Height           int       `json:"height"`
+}
+
+type UploadGoRoutines struct {
+	Url              string `json:"url"`
+	OriginalFilename string `json:"original_filename"`
+	MimeType         string `json:"mime_type"`
+	Width            int    `json:"width"`
+	Height           int    `json:"height"`
+	S3Key            string `jso:"s3_key"`
+	FileSize         int64  `json:"file_size_bytes"`
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -626,23 +627,30 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := fh.DB.Query(`SELECT url FROM images WHERE user_id = $1`, userId)
+	rows, err := fh.DB.Query(`SELECT id, original_filename,mime_type,upload_date,width, height FROM images WHERE user_id = $1`, userId)
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Query failed!")
 		return
 	}
 	defer rows.Close()
 
-	var img models.SendAllToUserImagesUI
+	var img []models.SendAllToUserImagesUI
 
 	for rows.Next() {
-		var url string
-		err := rows.Scan(&url)
+		var image models.SendAllToUserImagesUI
+		err := rows.Scan(
+			&image.Id,
+			&image.OriginalFilename,
+			&image.MimeType,
+			&image.UploadDate,
+			&image.Width,
+			&image.Height,
+		)
 		if err != nil {
 			utils.SendError(w, http.StatusInternalServerError, "Scan failed!")
 			return
 		}
-		img.Url = append(img.Url, url)
+		img = append(img, image)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -650,7 +658,18 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, img)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	response := map[string]any{
+		"status": "success",
+		"data":   img,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Failed to encode response: %v", err)
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+	}
 
 }
 
@@ -700,25 +719,31 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 		return
 	}
 
-	success := make(chan string, len(files))
-
-	error := make(chan error, len(files))
+	success := make(chan models.UploadGoRoutines, len(files))
+	errChn := make(chan error, len(files))
 
 	var wg sync.WaitGroup
 
 	for _, fileHeader := range files {
 		wg.Add(1)
-
-		go func() {
-			if fileHeader.Filename == "" {
-				error <- fmt.Errorf("Filename not defined %s", fileHeader.Filename)
+		go func(f *multipart.FileHeader) {
+			defer wg.Done()
+			if f.Filename == "" {
+				errChn <- fmt.Errorf("filename not defined %s", f.Filename)
 				return
 			}
 
-			file, err := fileHeader.Open()
+			err = validateContentType(f.Header.Get("Content-Type"))
 
 			if err != nil {
-				error <- fmt.Errorf("Unable to open file %s", fileHeader.Filename)
+				errChn <- fmt.Errorf("invalid file type %s", f.Header.Get("Content-Type"))
+				return
+			}
+
+			file, err := f.Open()
+
+			if err != nil {
+				errChn <- fmt.Errorf("unable to open file %s", f.Filename)
 				return
 			}
 
@@ -726,27 +751,30 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 
 			fileBytes, err := io.ReadAll(file)
 			if err != nil {
-				error <- fmt.Errorf("Unable to read file %s", fileHeader.Filename)
+				errChn <- fmt.Errorf("unable to read file %s", f.Filename)
 				return
 			}
 
-			key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + user.SecretKey + "_" + fileHeader.Filename
+			key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + userID + "_" + f.Filename
 
-			url, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), key)
+			url, err := fh.CreatePresignedUploadRequest(f.Filename, f.Header.Get("Content-Type"), key)
 
 			if err != nil {
-				error <- fmt.Errorf("Internal server error with file %s", fileHeader.Filename)
+				fmt.Println(err)
+				errChn <- fmt.Errorf("internal server error with file %s", f.Filename)
 				return
 			}
 
 			reqHttp, err := http.NewRequest("PUT", *url, bytes.NewReader(fileBytes))
 
 			if err != nil {
-				error <- fmt.Errorf("Internal server error with file %s", fileHeader.Filename)
+				fmt.Println(err)
+
+				errChn <- fmt.Errorf("internal server error with file %s", f.Filename)
 				return
 			}
 
-			reqHttp.Header.Set("Content-Type", fileHeader.Header.
+			reqHttp.Header.Set("Content-Type", f.Header.
 				Get("Content-Type"))
 
 			client := &http.Client{}
@@ -754,14 +782,151 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 			resp, err := client.Do(reqHttp)
 
 			if err != nil {
-				error <- fmt.Errorf("Unable to upload file %s", fileHeader.Filename)
+				fmt.Println(err)
+
+				errChn <- fmt.Errorf("unable to upload file %s", f.Filename)
 				return
 			}
 
 			defer resp.Body.Close()
 
-		}()
+			if resp.StatusCode != 200 {
+				fmt.Println("err")
 
+				errChn <- fmt.Errorf("internal server error %s", f.Filename)
+				return
+			}
+
+			fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
+			success <- models.UploadGoRoutines{Url: fileURL, OriginalFilename: f.Filename, MimeType: f.Header.Get("Content-Type"), Width: 0, Height: 0, S3Key: key, FileSize: f.Size}
+
+		}(fileHeader)
+
+		wg.Wait()
+	}
+	close(success)
+	close(errChn)
+
+	var uploaded []models.UploadGoRoutines
+
+	var uploadedFiles []string
+	for imgSuccess := range success {
+		uploadedFiles = append(uploadedFiles, imgSuccess.OriginalFilename)
+		uploaded = append(uploaded, models.UploadGoRoutines{
+			Url:              imgSuccess.Url,
+			OriginalFilename: imgSuccess.OriginalFilename,
+			MimeType:         imgSuccess.MimeType,
+			Width:            imgSuccess.Width,
+			Height:           imgSuccess.Height,
+			S3Key:            imgSuccess.S3Key,
+			FileSize:         imgSuccess.FileSize,
+		})
 	}
 
+	err = fh.SaveUploadedImages(uploaded, userID)
+
+	if err != nil {
+		fmt.Println(err)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	var errorMessages []string
+	for err := range errChn {
+		if err != nil {
+			errorMessages = append(errorMessages, err.Error())
+		}
+	}
+
+	response := map[string]any{
+		"uploaded_files":  uploadedFiles,
+		"failed_file_err": errorMessages,
+	}
+
+	utils.SendJSON(w, http.StatusOK, response)
+}
+func (fh *FileHandler) SaveUploadedImages(images []models.UploadGoRoutines, userID string) error {
+	if len(images) == 0 {
+		return nil
+	}
+
+	fmt.Println("yes")
+
+	tx, err := fh.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO images (user_id, url, original_filename, mime_type, width, height, s3_key,file_size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, img := range images {
+		_, err = stmt.Exec(userID, img.Url, img.OriginalFilename, img.MimeType, img.Width, img.Height, img.S3Key, img.FileSize)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Request) {
+	parsedURL := strings.Split(r.URL.Path, "/")
+
+	if len(parsedURL) < 4 {
+		http.Error(w, "Invalid URL structure", http.StatusBadRequest)
+		return
+	}
+
+	photoID := parsedURL[4]
+
+	if photoID == "" {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	row2 := fh.DB.QueryRow(`SELECT url FROM images WHERE id = $1`, photoID)
+
+	var url string
+
+	err := row2.Scan(
+		&url,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid image id", http.StatusBadRequest)
+		} else {
+			http.Error(w, "Image not found", http.StatusNotFound)
+
+		}
+		return
+	}
+
+	resp, err := http.Get(url)
+
+	fmt.Println(err)
+	fmt.Println(resp.Header.Get("Content-Type"))
+
+	if err != nil || resp.StatusCode != http.StatusOK {
+		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		return
+	}
+
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, resp.Body)
 }
