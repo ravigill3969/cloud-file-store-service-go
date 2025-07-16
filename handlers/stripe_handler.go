@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"os"
 
@@ -21,8 +22,8 @@ func CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	priceId := os.Getenv("STRIPE_PRICE_ID")
 
 	params := &stripe.CheckoutSessionParams{
-		SuccessURL: stripe.String("https://example.com/success"),
-		CancelURL:  stripe.String("https://example.com/cancel"),
+		SuccessURL: stripe.String("http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
+		CancelURL:  stripe.String("http://localhost:5173/cancel"),
 		Mode:       stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
@@ -42,4 +43,25 @@ func CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	url := result.URL
 
 	utils.SendJSON(w, http.StatusOK, url)
+}
+
+func VerifyCheckoutSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	sess, err := session.Get(req.SessionID, nil)
+	if err != nil {
+		utils.SendError(w, http.StatusBadRequest, "Invalid session ID")
+		return
+	}
+
+	if sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
+		utils.SendError(w, http.StatusBadRequest, "Payment not completed")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "verified"})
 }

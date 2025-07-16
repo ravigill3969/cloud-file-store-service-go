@@ -97,7 +97,7 @@ func main() {
 
 	routes.RegisterUserRoutes(mux, userHandler, redisClient)
 	routes.FileRoutes(mux, fileHandler, redisClient)
-	routes.StripeRouter(mux)
+	routes.StripeRoutes(mux)
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")

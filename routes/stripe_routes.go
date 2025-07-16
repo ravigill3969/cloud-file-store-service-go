@@ -6,6 +6,7 @@ import (
 	"github.com/ravigill3969/cloud-file-store/handlers"
 )
 
-func StripeRouter(mux *http.ServeMux) {
+func StripeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/stripe/create-session", handlers.CreateCheckoutSession)
+	mux.HandleFunc("POST /api/stripe/verify-session", handlers.VerifyCheckoutSession)
 }
