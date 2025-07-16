@@ -13,11 +13,11 @@ import (
 )
 
 type Stripe struct {
-	Db          *sql.DB
-	RedisClient *redis.Client
+	Db    *sql.DB
+	Redis *redis.Client
 }
 
-func CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
+func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	stripe.Key = os.Getenv("STRIPE_KEY")
 	priceId := os.Getenv("STRIPE_PRICE_ID")
 
@@ -45,7 +45,7 @@ func CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, http.StatusOK, url)
 }
 
-func VerifyCheckoutSession(w http.ResponseWriter, r *http.Request) {
+func (s *Stripe) VerifyCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"session_id"`
 	}

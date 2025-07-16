@@ -94,10 +94,13 @@ func main() {
 		S3Client:   s3Client,
 		S3Bucket:   bucket,
 	}
+	stripeHandler := &handlers.Stripe{
+		Db:    db,
+	}
 
 	routes.RegisterUserRoutes(mux, userHandler, redisClient)
 	routes.FileRoutes(mux, fileHandler, redisClient)
-	routes.StripeRoutes(mux)
+	routes.StripeRoutes(mux, stripeHandler, redisClient)
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")
