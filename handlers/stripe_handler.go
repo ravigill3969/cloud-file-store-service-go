@@ -3,9 +3,12 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 
+	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/utils"
 	"github.com/redis/go-redis/v9"
 	"github.com/stripe/stripe-go/v82"
@@ -59,6 +62,33 @@ func (s *Stripe) VerifyCheckoutSession(w http.ResponseWriter, r *http.Request) {
 
 	if sess.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid {
 		utils.SendError(w, http.StatusBadRequest, "Payment not completed")
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = s.Db.Exec(`
+    UPDATE users 
+    SET post_api_calls = 500,
+        get_api_calls = 500,
+        edit_api_calls = 50,
+        account_type = 'standard'
+    WHERE uuid = $1
+`, userID)
+
+	fmt.Println(err)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			utils.SendError(w, http.StatusNotFound, "Not found!")
+		} else {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		}
 		return
 	}
 

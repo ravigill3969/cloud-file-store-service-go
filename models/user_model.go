@@ -12,7 +12,8 @@ type User struct {
 	Email          string    `db:"email" json:"email"`
 	PasswordHash   string    `db:"password_hash" json:"password"`
 	PublicKey      string    `db:"public_key" json:"public_key"`
-	SecretKey      string    `db:"secret_key" json:"-"`
+	SecretKey      string    `db:"secret_key" json:"-"`  // savved as enum in db 1)free  2) standard 3) pro
+
 	AccountType    string    `db:"account_type" json:"account_type"`
 	MaxAPICalls    int       `db:"max_api_calls" json:"max_api_calls"`
 	StorageUsedMB  int       `db:"storage_used_mb" json:"storage_used_mb"`

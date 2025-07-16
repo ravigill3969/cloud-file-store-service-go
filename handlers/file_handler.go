@@ -354,7 +354,6 @@ func validateContentType(contentType string) error {
 
 func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
-	// /api/file/get/{id}/{publicKey}/secure/{secretKey}
 
 	if len(parsedURL) < 8 {
 		http.Error(w, "Invalid URL structure", http.StatusBadRequest)

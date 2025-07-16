@@ -12,8 +12,6 @@ func StripeRoutes(mux *http.ServeMux, s *handlers.Stripe, redis *redis.Client) {
 	authMw := &middleware.RedisStruct{
 		RedisClient: redis,
 	}
-
 	mux.Handle("POST /api/stripe/create-session", authMw.AuthMiddleware(http.HandlerFunc(s.CreateCheckoutSession)))
 	mux.Handle("POST /api/stripe/verify-session", authMw.AuthMiddleware(http.HandlerFunc(s.VerifyCheckoutSession)))
-
 }
