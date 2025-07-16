@@ -845,6 +845,7 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 
 	utils.SendJSON(w, http.StatusOK, response)
 }
+
 func (fh *FileHandler) SaveUploadedImages(images []models.UploadGoRoutines, userID string) error {
 	if len(images) == 0 {
 		return nil
@@ -911,6 +912,8 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "Image not found", http.StatusNotFound)
 
 		}
+
+		fmt.Println(err)
 		return
 	}
 
