@@ -10,10 +10,12 @@ import (
 	"os"
 
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
+	"github.com/ravigill3969/cloud-file-store/models"
 	"github.com/ravigill3969/cloud-file-store/utils"
 	"github.com/redis/go-redis/v9"
 	"github.com/stripe/stripe-go/v82"
 	"github.com/stripe/stripe-go/v82/checkout/session"
+	"github.com/stripe/stripe-go/v82/subscription"
 )
 
 type Stripe struct {
@@ -71,6 +73,62 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, http.StatusOK, url)
 }
 
+func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		log.Printf("Error: User ID not found in context")
+		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		return
+	}
+
+	var user models.CancelSubscriptionStripe
+
+	err := s.Db.QueryRow(`SELECT stripe_customer_id, stripe_subscription_id, current_period_start from stripe WHERE user_id = $1`, userID).Scan(&user.CustomerId, &user.SubscriptionId, &user.SubscriptionCurrentPeriodStart)
+
+	if err != nil {
+
+		fmt.Println(err)
+		if err == sql.ErrNoRows {
+			utils.SendError(w, http.StatusNotFound, "Not found")
+
+		} else {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	stripe.Key = os.Getenv("STRIPE_KEY")
+
+	params := &stripe.SubscriptionParams{CancelAtPeriodEnd: stripe.Bool(true)}
+
+	_, err = subscription.Update(user.SubscriptionId, params)
+
+	if err != nil {
+		fmt.Println(err)
+
+		http.Error(w, "Failed to set subscription cancel at period end", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = s.Db.Exec(`UPDATE users SET account_type = 'cancel_at_period_end' WHERE uuid = $1`, userID)
+
+	if err != nil {
+		fmt.Println(err)
+
+		if err == sql.ErrNoRows {
+			utils.SendError(w, http.StatusInternalServerError, "Unable to update")
+
+		} else {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK, "Successfully canceled!")
+
+}
+
 func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	const MaxBodyBytes = int64(65536)
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
@@ -90,29 +148,51 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch event.Type {
+
 	case "checkout.session.completed":
-
 		err = utils.HandlePaymentSessionCompleted(s.Db, event)
-
 		fmt.Println("created session completed")
-
 		if err != nil {
 			utils.SendError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-
 		return
+
 	case "invoice.paid":
-		err := utils.HandleInvoicePaid(s.Db, event)
-
+		err = utils.HandleInvoicePaid(s.Db, event)
 		fmt.Println("invoice paid")
-
 		if err != nil {
 			utils.SendError(w, http.StatusInternalServerError, "Payment failed")
 			return
 		}
+		return
+
+	case "invoice.payment_failed":
+		fmt.Println("payment failed")
+		return
+
+	case "customer.subscription.updated":
+
+		err := utils.HandleSubscriptionUpdated(s.Db, event)
+
+		if err != nil {
+			utils.SendError(w, http.StatusInternalServerError, "Unabel to cancel subscription")
+			return
+		}
 
 		return
+
+	case "customer.subscription.deleted":
+
+		err := utils.HandleSubscriptionUpdated(s.Db, event)
+
+		if err != nil {
+			utils.SendError(w, http.StatusInternalServerError, "Unabel to cancel subscription")
+			return
+		}
+
+		return
+
 	default:
 		log.Printf("Unhandled event type: %s", event.Type)
 	}
