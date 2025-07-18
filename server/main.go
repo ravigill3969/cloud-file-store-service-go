@@ -98,7 +98,7 @@ func main() {
 		Db: db,
 	}
 
-	mux.HandleFunc("/webhook", handlers.HandleWebhook)
+	mux.HandleFunc("/webhook", stripeHandler.HandleWebhook)
 	routes.RegisterUserRoutes(mux, userHandler, redisClient)
 	routes.FileRoutes(mux, fileHandler, redisClient)
 	routes.StripeRoutes(mux, stripeHandler, redisClient)
