@@ -7,3 +7,6 @@ type CancelSubscriptionStripe struct {
 	SubscriptionId        string
 	SubscriptionStartDate time.Time
 }
+
+
+//   subscription_status TEXT,         -- 'active', 'canceled', 'past_due', etc.
