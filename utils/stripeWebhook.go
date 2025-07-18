@@ -12,6 +12,7 @@ import (
 )
 
 func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
+
 	var inv stripe.Invoice
 
 	if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
@@ -47,6 +48,7 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 	`, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
+
 	}
 
 	_, err = db.Exec(`
@@ -62,10 +64,8 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 		periodStart, periodEnd, true, priceID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
-	}
 
-	fmt.Println(4)
-	log.Printf("Invoice handled for user , customer")
+	}
 	return nil
 }
 
@@ -97,9 +97,10 @@ func HandlePaymentSessionCompleted(db *sql.DB, event stripe.Event) error {
 }
 
 func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
+	fmt.Print("subscritpion updated paid")
+
 	var inv stripe.Invoice
 
-	// Parse Stripe invoice
 	if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
 		return fmt.Errorf("failed to parse invoice.payment_succeeded: %w", err)
 	}
@@ -109,7 +110,6 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
 	// 	log.Println("Parsed Stripe Invoice:\n", string(pretty))
 	// }
 
-	// Extract info
 	userID := inv.Metadata["userID"]
 	subscriptionID := inv.ID
 
@@ -133,6 +133,7 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
 	WHERE uuid = $1
 `, userID)
 	if err != nil {
+		fmt.Print(err)
 		return fmt.Errorf("failed to downgrade user: %w", err)
 	}
 

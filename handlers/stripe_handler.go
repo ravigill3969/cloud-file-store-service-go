@@ -39,12 +39,15 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println(userID)
+	var CustomerId string
+
+	s.Db.QueryRow(`SELECT stripe_customer_id FROM stripe WHERE user_id = $1`, userID).Scan(&CustomerId)
 
 	params := &stripe.CheckoutSessionParams{
 		SuccessURL: stripe.String("http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
 		CancelURL:  stripe.String("http://localhost:5173/cancel"),
 		Mode:       stripe.String(string(stripe.CheckoutSessionModeSubscription)),
+		// Customer:   stripe.String(string(CustomerId)),
 
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
@@ -57,6 +60,10 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 				"userID": userID,
 			},
 		},
+	}
+
+	if CustomerId != "" {
+		params.Customer = &CustomerId
 	}
 
 	params.AddMetadata("userID", userID)
