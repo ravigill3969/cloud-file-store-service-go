@@ -44,7 +44,7 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	s.Db.QueryRow(`SELECT stripe_customer_id FROM stripe WHERE user_id = $1`, userID).Scan(&CustomerId)
 
 	params := &stripe.CheckoutSessionParams{
-		SuccessURL: stripe.String("http://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}"),
+		SuccessURL: stripe.String("http://localhost:5173/success"),
 		CancelURL:  stripe.String("http://localhost:5173/cancel"),
 		Mode:       stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 		// Customer:   stripe.String(string(CustomerId)),
