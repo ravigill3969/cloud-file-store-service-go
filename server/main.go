@@ -93,6 +93,7 @@ func main() {
 		S3Uploader: s3Uploader,
 		S3Client:   s3Client,
 		S3Bucket:   bucket,
+		Redis:      redisClient,
 	}
 	stripeHandler := &handlers.Stripe{
 		Db: db,
