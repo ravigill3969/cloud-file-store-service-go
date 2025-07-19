@@ -399,7 +399,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	err = fh.DB.QueryRow(`
         SELECT 
-            id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1`, imageID).Scan(
+            id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1 AND deleted = FALSE`, imageID).Scan(
 		&image.ID,
 		&image.UserID,
 		&image.S3Key,
@@ -558,7 +558,7 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := fh.DB.Query(`SELECT id, original_filename,mime_type,upload_date,width, height FROM images WHERE user_id = $1`, userId)
+	rows, err := fh.DB.Query(`SELECT id, original_filename,mime_type,upload_date,width, height FROM images WHERE user_id = $1 AND deleted = FALSE`, userId)
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Query failed!")
 		return
@@ -921,7 +921,7 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	row := fh.DB.QueryRowContext(ctx, `SELECT url FROM images WHERE id = $1`, photoID)
+	row := fh.DB.QueryRowContext(ctx, `SELECT url FROM images WHERE id = $1 AND deleted = FALSE`, photoID)
 	var url string
 	err := row.Scan(&url)
 	if err != nil {
@@ -1020,7 +1020,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	var s3key string
 
-	err := fh.DB.QueryRow(`SELECT s3_key FROM images WHERE id = $1`, id).Scan(&s3key)
+	err := fh.DB.QueryRow(`SELECT s3_key FROM images WHERE id = $1 AND deleted = FALSE`, id).Scan(&s3key)
 
 	if err != nil {
 		utils.SendError(w, http.StatusNotFound, "Not found!")
@@ -1047,4 +1047,48 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to stream file", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
+	imageID := r.URL.Query().Get("iid") //from ii, one i is for image
+
+	fmt.Println(imageID)
+
+	userID := r.Context().Value(middleware.UserIDContextKey)
+
+	res, err := fh.DB.Exec(
+		`UPDATE images SET deleted = TRUE WHERE id = $1 AND user_id = $2`,
+		imageID, userID,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			utils.SendError(w, http.StatusNotFound, "Not found")
+		} else {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, "No image deleted (maybe wrong ID or unauthorized)", http.StatusNotFound)
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK, "Image deleted successfully and will be permanently deleted in 7 days")
+
+	go removeImageFromRedis(imageID, fh.Redis)
+}
+
+func removeImageFromRedis(photoID string, redisClient *redis.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	key := fmt.Sprintf("image:%s", photoID)
+	err := redisClient.Del(ctx, key).Err()
+	if err != nil {
+		fmt.Printf("Failed to delete key %s from Redis: %v\n", key, err)
+	}
+	return err
 }

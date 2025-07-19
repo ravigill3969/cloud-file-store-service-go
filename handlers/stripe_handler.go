@@ -191,7 +191,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	case "customer.subscription.deleted":
 
-		err := utils.HandleSubscriptionUpdated(s.Db, event)
+		err := utils.HandleSubscriptionDeleted(s.Db, event)
 
 		if err != nil {
 			utils.SendError(w, http.StatusInternalServerError, "Unabel to cancel subscription")
