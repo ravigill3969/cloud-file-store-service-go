@@ -40,10 +40,8 @@ type SecretKeyUploadUser struct {
 	PostAPICalls int16     `json:"post_api_calls"`
 }
 
-//  original_filename,mime_type,upload_date,width, height
-
 type SendAllToUserImagesUI struct {
-	Id              uuid.UUID    `json:"id"`
+	Id               uuid.UUID `json:"id"`
 	OriginalFilename string    `json:"original_filename"`
 	MimeType         string    `json:"mime_type"`
 	UploadDate       time.Time `json:"upload_date"`

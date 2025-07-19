@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -875,12 +876,10 @@ func (fh *FileHandler) ServeFileWithIDForThirdParty(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Try to serve from cache first
 	if fh.serveFromCache(w, photoID) {
 		return
 	}
 
-	// Cache miss - fetch from database and external URL
 	fh.serveFromSource(w, r, photoID)
 }
 
@@ -891,7 +890,7 @@ func (fh *FileHandler) serveFromCache(w http.ResponseWriter, photoID string) boo
 	key := fmt.Sprintf("image:%s", photoID)
 	rawData, err := fh.Redis.Get(ctx, key).Bytes()
 	if err != nil {
-		return false // Cache miss
+		return false
 	}
 
 	var payload map[string]string
@@ -907,7 +906,7 @@ func (fh *FileHandler) serveFromCache(w http.ResponseWriter, photoID string) boo
 	}
 
 	w.Header().Set("Content-Type", payload["content-type"])
-	w.Header().Set("Cache-Control", "public, max-age=600") // 10 minutes
+	w.Header().Set("Cache-Control", "public, max-age=600")
 
 	if _, err := w.Write(imageBytes); err != nil {
 		log.Printf("Error writing cached image to response: %v", err)
@@ -919,7 +918,6 @@ func (fh *FileHandler) serveFromCache(w http.ResponseWriter, photoID string) boo
 }
 
 func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, photoID string) {
-	// Query database for image URL
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
@@ -936,7 +934,6 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	// Fetch image from external URL
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
@@ -960,15 +957,12 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 		contentType = "application/octet-stream"
 	}
 
-	// Set response headers
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=600")
 
-	// Use a buffer to capture the data for caching
 	var cacheBuffer bytes.Buffer
 	multiWriter := io.MultiWriter(w, &cacheBuffer)
 
-	// Copy data to both response and cache buffer
 	if _, err := io.Copy(multiWriter, resp.Body); err != nil {
 		log.Printf("Error serving/collecting image %s: %v", photoID, err)
 		return
@@ -976,7 +970,6 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 
 	log.Printf("Served image %s from source (%d bytes)", photoID, cacheBuffer.Len())
 
-	// Cache the image asynchronously
 	go func() {
 		if err := fh.cacheImageInRedis(photoID, contentType, cacheBuffer.Bytes()); err != nil {
 			log.Printf("Error caching image %s: %v", photoID, err)
@@ -990,7 +983,6 @@ func (fh *FileHandler) cacheImageInRedis(photoID, contentType string, data []byt
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Skip caching if image is too large (e.g., > 10MB)
 	const maxCacheSize = 10 * 1024 * 1024
 	if len(data) > maxCacheSize {
 		log.Printf("Skipping cache for image %s: too large (%d bytes)", photoID, len(data))
@@ -1016,4 +1008,43 @@ func (fh *FileHandler) cacheImageInRedis(photoID, contentType string, data []byt
 	}
 
 	return nil
+}
+
+func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("iid")
+
+	if id == "" {
+		utils.SendError(w, http.StatusBadRequest, "Missing 'key' parameter")
+		return
+	}
+
+	var s3key string
+
+	err := fh.DB.QueryRow(`SELECT s3_key FROM images WHERE id = $1`, id).Scan(&s3key)
+
+	if err != nil {
+		utils.SendError(w, http.StatusNotFound, "Not found!")
+		return
+	}
+
+	output, err := fh.S3Client.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(fh.S3Bucket),
+		Key:    aws.String(s3key),
+	})
+	if err != nil {
+		http.Error(w, "Failed to get object from S3: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer output.Body.Close()
+
+	filename := path.Base(s3key)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.Header().Set("Content-Type", aws.StringValue(output.ContentType))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", *output.ContentLength))
+
+	_, err = io.Copy(w, output.Body)
+	if err != nil {
+		http.Error(w, "Failed to stream file", http.StatusInternalServerError)
+		return
+	}
 }
