@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +26,7 @@ import (
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/models"
 	"github.com/ravigill3969/cloud-file-store/utils"
+	"github.com/redis/go-redis/v9"
 )
 
 type FileHandler struct {
@@ -31,6 +34,7 @@ type FileHandler struct {
 	S3Uploader s3manageriface.UploaderAPI
 	S3Client   s3iface.S3API
 	S3Bucket   string
+	Redis      *redis.Client
 }
 
 func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
@@ -350,79 +354,6 @@ func validateContentType(contentType string) error {
 		}
 	}
 	return fmt.Errorf("unsupported image format: %s", contentType)
-}
-
-func (fh *FileHandler) ServeFileWithID(w http.ResponseWriter, r *http.Request) {
-	parsedURL := strings.Split(r.URL.Path, "/")
-
-	if len(parsedURL) < 8 {
-		http.Error(w, "Invalid URL structure", http.StatusBadRequest)
-		return
-	}
-
-	publicKey := parsedURL[5]
-	photoID := parsedURL[4]
-	secretKey := parsedURL[7]
-
-	if publicKey == "" {
-		http.Error(w, "Invalid public key", http.StatusBadRequest)
-		return
-	}
-
-	if photoID == "" {
-		http.Error(w, "Invalid id", http.StatusBadRequest)
-		return
-	}
-
-	row, err := fh.DB.Exec(`UPDATE users SET get_api_calls = get_api_calls - 1 WHERE public_key = $1 AND secret_key = $2 AND get_api_calls > 1 `, &publicKey, &secretKey)
-
-	if err != nil {
-		log.Printf("DB update error: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-
-	}
-
-	rowsAffected, err := row.RowsAffected()
-	if err != nil {
-		http.Error(w, "Something went wrong", http.StatusInternalServerError)
-		return
-	}
-
-	if rowsAffected == 0 {
-		http.Error(w, "Unable to update", http.StatusInternalServerError)
-		return
-	}
-
-	row2 := fh.DB.QueryRow(`SELECT url FROM images WHERE id = $1`, photoID)
-
-	var url string
-
-	err = row2.Scan(
-		&url,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			http.Error(w, "Invalid image id", http.StatusBadRequest)
-		} else {
-			http.Error(w, "Image not found", http.StatusNotFound)
-
-		}
-		return
-	}
-
-	resp, err := http.Get(url)
-
-	if err != nil || resp.StatusCode != http.StatusOK {
-		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
-		return
-	}
-
-	defer resp.Body.Close()
-
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Body)
 }
 
 func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
@@ -850,8 +781,6 @@ func (fh *FileHandler) SaveUploadedImages(images []models.UploadGoRoutines, user
 		return nil
 	}
 
-	fmt.Println("yes")
-
 	tx, err := fh.DB.Begin()
 	if err != nil {
 		return err
@@ -931,4 +860,160 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(http.StatusOK)
 	io.Copy(w, resp.Body)
+}
+
+func (fh *FileHandler) ServeFileWithIDForThirdParty(w http.ResponseWriter, r *http.Request) {
+	parsedURL := strings.Split(r.URL.Path, "/")
+	if len(parsedURL) < 5 {
+		http.Error(w, "Invalid URL structure", http.StatusBadRequest)
+		return
+	}
+
+	photoID := parsedURL[4]
+	if photoID == "" {
+		http.Error(w, "Invalid id", http.StatusBadRequest)
+		return
+	}
+
+	// Try to serve from cache first
+	if fh.serveFromCache(w, photoID) {
+		return
+	}
+
+	// Cache miss - fetch from database and external URL
+	fh.serveFromSource(w, r, photoID)
+}
+
+func (fh *FileHandler) serveFromCache(w http.ResponseWriter, photoID string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	key := fmt.Sprintf("image:%s", photoID)
+	rawData, err := fh.Redis.Get(ctx, key).Bytes()
+	if err != nil {
+		return false // Cache miss
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rawData, &payload); err != nil {
+		log.Printf("Error unmarshaling cached data for %s: %v", photoID, err)
+		return false
+	}
+
+	imageBytes, err := base64.StdEncoding.DecodeString(payload["image"])
+	if err != nil {
+		log.Printf("Error decoding base64 for %s: %v", photoID, err)
+		return false
+	}
+
+	w.Header().Set("Content-Type", payload["content-type"])
+	w.Header().Set("Cache-Control", "public, max-age=600") // 10 minutes
+
+	if _, err := w.Write(imageBytes); err != nil {
+		log.Printf("Error writing cached image to response: %v", err)
+		return false
+	}
+
+	log.Printf("Served image %s from cache (%d bytes)", photoID, len(imageBytes))
+	return true
+}
+
+func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, photoID string) {
+	// Query database for image URL
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	row := fh.DB.QueryRowContext(ctx, `SELECT url FROM images WHERE id = $1`, photoID)
+	var url string
+	err := row.Scan(&url)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Image not found", http.StatusNotFound)
+		} else {
+			log.Printf("Database error for image %s: %v", photoID, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Fetch image from external URL
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Printf("Error fetching image from %s: %v", url, err)
+		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Non-200 status code %d when fetching %s", resp.StatusCode, url)
+		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		return
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=600")
+
+	// Use a buffer to capture the data for caching
+	var cacheBuffer bytes.Buffer
+	multiWriter := io.MultiWriter(w, &cacheBuffer)
+
+	// Copy data to both response and cache buffer
+	if _, err := io.Copy(multiWriter, resp.Body); err != nil {
+		log.Printf("Error serving/collecting image %s: %v", photoID, err)
+		return
+	}
+
+	log.Printf("Served image %s from source (%d bytes)", photoID, cacheBuffer.Len())
+
+	// Cache the image asynchronously
+	go func() {
+		if err := fh.cacheImageInRedis(photoID, contentType, cacheBuffer.Bytes()); err != nil {
+			log.Printf("Error caching image %s: %v", photoID, err)
+		} else {
+			log.Printf("Successfully cached image %s (%d bytes)", photoID, cacheBuffer.Len())
+		}
+	}()
+}
+
+func (fh *FileHandler) cacheImageInRedis(photoID, contentType string, data []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Skip caching if image is too large (e.g., > 10MB)
+	const maxCacheSize = 10 * 1024 * 1024
+	if len(data) > maxCacheSize {
+		log.Printf("Skipping cache for image %s: too large (%d bytes)", photoID, len(data))
+		return nil
+	}
+
+	key := "image:" + photoID
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	payload := map[string]string{
+		"image":        encoded,
+		"content-type": contentType,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cache payload: %w", err)
+	}
+
+	// Cache for 10 minutes
+	if err := fh.Redis.Set(ctx, key, jsonData, 10*time.Minute).Err(); err != nil {
+		return fmt.Errorf("failed to set cache: %w", err)
+	}
+
+	return nil
 }
