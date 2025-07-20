@@ -108,7 +108,11 @@ func main() {
 		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")
 	})
 
-	middleware := middleware.CORS(middleware.SetCommonHeaders(mux))
+	middleware := middleware.CORS(
+		middleware.SetCommonHeaders(
+			middleware.GlobalRateLimiter(redisClient)(mux),
+		),
+	)
 
 	fmt.Printf("server is running on http://localhost:%s\n", PORT)
 
