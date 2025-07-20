@@ -429,12 +429,11 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	err := updateUserPasswordLogic(h.DB, r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Password updated successfully"))
+	utils.SendJSON(w, http.StatusOK, "Password updated!")
 }
 
 func updateUserPasswordLogic(db *sql.DB, r *http.Request) error {
