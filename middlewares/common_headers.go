@@ -20,11 +20,10 @@ func SetCommonHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		// w.Header().Set("Access-Control-Allow-Origin", "https://localhost:5173")
-		// w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "86400")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)

@@ -18,6 +18,7 @@ import (
 	"github.com/ravigill3969/cloud-file-store/handlers"
 	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
 	"github.com/ravigill3969/cloud-file-store/routes"
+	"github.com/ravigill3969/cloud-file-store/utils"
 )
 
 func main() {
@@ -105,7 +106,7 @@ func main() {
 	routes.StripeRoutes(mux, stripeHandler, redisClient)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Hello, Go HTTP server! Your routes are ready and database is connected.")
+		utils.SendError(w, http.StatusBadGateway, "This route donot exist")
 	})
 
 	middleware := middleware.CORS(

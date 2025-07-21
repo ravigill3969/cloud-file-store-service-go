@@ -41,7 +41,6 @@ type FileHandler struct {
 func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
-		fmt.Println("ParseMultipartForm error:", err)
 		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
@@ -58,7 +57,6 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	for _, fileHeader := range files {
 
 		if fileHeader.Filename == "" {
-			fmt.Println("Empty filename")
 			http.Error(w, "Filename missing in upload", http.StatusBadRequest)
 			return
 		}
@@ -66,7 +64,6 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		file, err := fileHeader.Open()
 
 		if err != nil {
-			fmt.Println("FormFile open error:", err)
 			http.Error(w, "File not provided", http.StatusBadRequest)
 			return
 		}
@@ -75,7 +72,6 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 		fileBytes, err := io.ReadAll(file)
 		if err != nil {
-			fmt.Println("ReadAll error:", err)
 			http.Error(w, "Error reading file", http.StatusInternalServerError)
 			return
 		}
@@ -83,7 +79,6 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 		if !ok {
-			log.Printf("Error: User ID not found in context")
 			http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
 			return
 		}
@@ -102,10 +97,8 @@ func (fh *FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			if err == sql.ErrNoRows {
-				log.Printf("User not found for ID: %s", userID)
 				http.Error(w, "User not found", http.StatusNotFound)
 			} else {
-				log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
 				http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
 			}
 			return
@@ -268,7 +261,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	fmt.Println(err)
 
 	if user.SecretKey != "" && secretKey != user.SecretKey {
-		http.Error(w, "Invalid public key", http.StatusUnauthorized)
+		http.Error(w, "Invalid public or secret key", http.StatusUnauthorized)
 		return
 	}
 	if err != nil {
@@ -337,12 +330,12 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
+	url := os.Getenv("BACKEND_URL")
+	imageURL := fmt.Sprintf("%s/api/file/get-file/{id}", url)
 
-	if err := json.NewEncoder(w).Encode(fileUpload); err != nil {
-		log.Printf("Error encoding user info to JSON: %v", err)
-	}
+	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
+		"url": imageURL,
+	})
 
 }
 
@@ -426,7 +419,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 			"id":  image.ID.String(),
 			"url": image.URL,
 		})
-		return // <--- Important to stop execution here
+		return
 	}
 
 	str, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
@@ -497,7 +490,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, map[string]string{
+	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
 		"url": str,
 	})
 }
