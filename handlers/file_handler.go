@@ -220,10 +220,8 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	secretKey := parsedURL[4]
-	publicKey := parsedURL[6]
-
-	// /api/file/upload/{secretKey}/secure/{publicKey}"
+	secretKey := parsedURL[6]
+	publicKey := parsedURL[4]
 
 	row := fh.DB.QueryRow(`WITH user_data AS (
     SELECT uuid, public_key, secret_key, username, email
@@ -331,7 +329,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	}
 
 	url := os.Getenv("BACKEND_URL")
-	imageURL := fmt.Sprintf("%s/api/file/get-file/{id}", url)
+	imageURL := fmt.Sprintf("%s/api/file/get-file/%s", url, fileUpload.Id)
 
 	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
 		"url": imageURL,
@@ -422,7 +420,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 		return
 	}
 
-	str, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
+	str, key, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 	if err != nil {
 		http.Error(w, "Image resize failed", http.StatusInternalServerError)
 		return
@@ -444,38 +442,43 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	query := `
 		INSERT INTO images (
-			id, user_id, s3_key, original_filename,
+			user_id, s3_key, original_filename,
 			mime_type, file_size_bytes, upload_date,
 			url, width, height
 		) VALUES (
 			$1, $2, $3, $4,
 			$5, $6, $7,
-			$8, $9, $10
-		)
+			$8, $9
+		) RETURNING id
 	`
 
-	_, err = tx.Exec(query,
-		image.ID, image.UserID, image.S3Key, image.OriginalFilename,
+	var imageIDEdit uuid.UUID
+	err = tx.QueryRow(query,
+		image.UserID, key, image.OriginalFilename,
 		image.MimeType, image.FileSize, image.UploadDate,
 		str, int16(widthInt), int16(heightInt),
-	)
+	).Scan(&imageIDEdit)
+
 	if err != nil {
 		log.Println("Image insert failed:", err)
 		http.Error(w, "Failed to insert image", http.StatusInternalServerError)
 		return
 	}
 
+	// You now have access to the inserted image ID
+	log.Println("Inserted image ID:", imageIDEdit)
+
 	// publicKey := parsedURL[5]
 	// secretKey := parsedURL[7]
 
 	res, err := tx.Exec(`
-		UPDATE users 
-		SET edit_api_calls = edit_api_calls - 1 
+		UPDATE users
+		SET edit_api_calls = edit_api_calls - 1
 		WHERE id = $1 AND edit_api_calls > 0 AND secret_key = $2 AND public_key = $3
 	`, image.UserID, secretKey, publicKey)
 	if err != nil {
 		log.Println("Failed to decrement edit_api_calls:", err)
-		http.Error(w, "Failed to update API quota", http.StatusInternalServerError)
+		http.Error(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
 		return
 	}
 
@@ -490,15 +493,18 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 		return
 	}
 
+	url := os.Getenv("BACKEND_URL")
+	imageURL := fmt.Sprintf("%s/api/file/get-file/%s", url, imageID)
+
 	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
-		"url": str,
+		"url": imageURL,
 	})
 }
 
-func LamdaMagicHere(key, width, height string) (string, error) {
+func LamdaMagicHere(key, width, height string) (string, string, error) {
 	baseURL := os.Getenv("AWS_LAMBDA")
 	if baseURL == "" {
-		return "", fmt.Errorf("AWS_LAMBDA env var not set")
+		return "", "", fmt.Errorf("AWS_LAMBDA env var not set")
 	}
 
 	params := url.Values{}
@@ -517,26 +523,36 @@ func LamdaMagicHere(key, width, height string) (string, error) {
 
 	fmt.Println("2")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 
 	fmt.Println(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("bad response status: %s", resp.Status)
+		return "", "", fmt.Errorf("bad response status: %s", resp.Status)
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	editedURL := string(bodyBytes)
+	var result struct {
+		URL string `json:"url"`
+		Key string `json:"key"`
+	}
 
-	fmt.Println(editedURL)
+	err = json.Unmarshal(bodyBytes, &result)
+	if err != nil {
+		return "", "", err
+	}
 
-	return editedURL, nil
+	// You can now use result.URL and result.Key
+	fmt.Println("URL:", result.URL)
+	fmt.Println("Key:", result.Key)
+
+	return result.URL, result.Key, nil
 }
 
 func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
