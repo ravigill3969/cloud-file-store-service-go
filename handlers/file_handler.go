@@ -30,6 +30,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	fileSizeLimitPerDayInMb = 5
+)
+
 type FileHandler struct {
 	DB         *sql.DB
 	S3Uploader s3manageriface.UploaderAPI
@@ -403,6 +407,8 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 		&image.URL,
 	)
 
+	fmt.Println(image.UserID, "user u f vjenkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkrvkenvoreknv;werjvne")
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "Image not found", http.StatusNotFound)
@@ -472,10 +478,10 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 	// secretKey := parsedURL[7]
 
 	res, err := tx.Exec(`
-		UPDATE users
-		SET edit_api_calls = edit_api_calls - 1
-		WHERE id = $1 AND edit_api_calls > 0 AND secret_key = $2 AND public_key = $3
-	`, image.UserID, secretKey, publicKey)
+    UPDATE users
+    SET edit_api_calls = edit_api_calls - 1
+    WHERE uuid = $1 AND edit_api_calls > 0 AND secret_key = $2 AND public_key = $3
+`, image.UserID, secretKey, publicKey)
 	if err != nil {
 		log.Println("Failed to decrement edit_api_calls:", err)
 		http.Error(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
@@ -516,18 +522,14 @@ func LamdaMagicHere(key, width, height string) (string, string, error) {
 	params.Add("width", width)
 	params.Add("height", height)
 
-	fmt.Println(baseURL)
 	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
 
 	resp, err := http.Post(fullURL, "application/json", nil)
 
-	fmt.Println("2")
 	if err != nil {
 		return "", "", err
 	}
 	defer resp.Body.Close()
-
-	fmt.Println(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return "", "", fmt.Errorf("bad response status: %s", resp.Status)
@@ -539,18 +541,15 @@ func LamdaMagicHere(key, width, height string) (string, string, error) {
 	}
 
 	var result struct {
-		URL string `json:"url"`
-		Key string `json:"key"`
+		Message string `json:"message"`
+		URL     string `json:"image_url"`
+		Key     string `json:"key"`
 	}
 
 	err = json.Unmarshal(bodyBytes, &result)
 	if err != nil {
 		return "", "", err
 	}
-
-	// You can now use result.URL and result.Key
-	fmt.Println("URL:", result.URL)
-	fmt.Println("Key:", result.Key)
 
 	return result.URL, result.Key, nil
 }
@@ -672,6 +671,32 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 				errChn <- fmt.Errorf("filename not defined %s", f.Filename)
 				return
 			}
+
+			sizeInBytes := fileHeader.Size
+			sizeInMB := float64(sizeInBytes) / (1024 * 1024)
+
+			res := fh.Redis.Get(r.Context(), userID+"file-size-limit")
+
+			val, err := res.Float64()
+			fmt.Println(err)
+			if err != nil {
+				if err == redis.Nil {
+					errChn <- fmt.Errorf("daily limit reached %s", f.Filename)
+					val = sizeInMB
+				} else {
+					errChn <- fmt.Errorf("internal server error %s", f.Filename)
+				}
+
+			}
+
+			fmt.Println(val)
+
+			if val > fileSizeLimitPerDayInMb {
+				errChn <- fmt.Errorf("daily limit reached %s", f.Filename)
+				return
+			}
+
+			fh.Redis.Set(r.Context(), userID+"file-size-limit", val+sizeInMB, 24*time.Hour)
 
 			err = validateContentType(f.Header.Get("Content-Type"))
 
