@@ -960,14 +960,15 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
-	imageID := r.URL.Query().Get("iid") //from ii, one i is for image
+	imageID := r.URL.Query().Get("iid") //iid := image id
+	// s3Key := r.URL.Query().Get("s3_key")   //from ii, one i is for image
 
 	fmt.Println(imageID)
 
 	userID := r.Context().Value(middleware.UserIDContextKey)
 
 	res, err := fh.DB.Exec(
-		`UPDATE images SET deleted = TRUE WHERE id = $1 AND user_id = $2`,
+		`UPDATE images SET deleted = TRUE, deleted_at = now() WHERE id = $1 AND user_id = $2`,
 		imageID, userID,
 	)
 
@@ -986,7 +987,25 @@ func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, "Image deleted successfully and will be permanently deleted in 7 days")
+	// fh.S3Client.DeleteObject(&s3.DeleteObjectInput{
+	// 	Bucket: aws.String(fh.S3Bucket),
+	// 	Key:    aws.String(s3Key),
+	// })
+
+	// if err != nil {
+	// 	return fmt.Errorf("failed to delete object from S3: %w", err)
+	// }
+
+	// // Optional: Wait for deletion to be confirmed (for consistency)
+	// err = fh.S3Client.WaitUntilObjectNotExists(ctx, &s3.HeadObjectInput{
+	// 	Bucket: aws.String(h.S3Bucket),
+	// 	Key:    aws.String(s3Key),
+	// })
+	// if err != nil {
+	// 	return fmt.Errorf("delete confirmed failed: %w", err)
+	// }
+
+	utils.SendJSON(w, http.StatusOK, "Image deleted successfully")
 
 	go removeImageFromRedis(imageID, fh.Redis)
 }

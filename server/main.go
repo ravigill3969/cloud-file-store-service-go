@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -28,6 +29,14 @@ func main() {
 	}
 
 	db, err := database.ConnectDB()
+
+	go func() {
+		for {
+			utils.CleanupSoftDeletedImages(db) // your cleanup logic
+			time.Sleep(24 * time.Hour)
+		}
+	}()
+
 	if err != nil {
 		log.Fatalf("Database connection failed: %v", err)
 	}
