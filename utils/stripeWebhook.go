@@ -32,10 +32,10 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 	//todo - update account_Type = standard
 	_, err := db.Exec(`
 	UPDATE users
-	SET post_api_calls = 500,
-	get_api_calls = 500,
-	edit_api_calls = 50,
-	account_type = 'basic' 
+	SET post_api_calls = 10,
+	get_api_calls = 10,
+	edit_api_calls = 10,
+	account_type = 'standard' 
 	WHERE uuid = $1
 	`, userID)
 	if err != nil {
@@ -48,8 +48,7 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 	current_period_start = $1,
 	current_period_end = $2,
 	cancel_at_period_end = $3,
-	price_id = $4,
-	updated_at = now()
+	price_id = $4
 	WHERE user_id = $5
 	`,
 		periodStart, periodEnd, true, priceID, userID)
@@ -93,17 +92,17 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
 	var inv stripe.Invoice
 
 	// Parse Stripe invoice
-	// if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
-	// 	return fmt.Errorf("failed to parse invoice.payment_succeeded: %w", err)
-	// }
+	if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
+		return fmt.Errorf("failed to parse invoice.payment_succeeded: %w", err)
+	}
 
-	// // Optional: Pretty log the invoice
-	// if pretty, err := json.MarshalIndent(inv, "", "  "); err == nil {
-	// 	log.Println("Parsed Stripe Invoice:\n", string(pretty))
-	// }
+	// Optional: Pretty log the invoice
+	if pretty, err := json.MarshalIndent(inv, "", "  "); err == nil {
+		log.Println("Parsed Stripe Invoice:\n", string(pretty))
+	}
 
 	// Extract info
-	subscriptionID := inv.ID
+	custmoreID := inv.Customer.ID
 
 	// Begin transaction
 	tx, err := db.Begin()
@@ -123,9 +122,9 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
 	UPDATE stripe
 	SET subscription_status = 'past_due',
 		cancel_at_period_end = true,
-		updated_at = now()
-	WHERE stripe_subscription_id = $1
-`, subscriptionID)
+		canceled_at = now()
+	WHERE stripe_customer_id = $1
+`, custmoreID)
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
 	}
@@ -157,20 +156,19 @@ func HandleSubscriptionDeleted(db *sql.DB, event stripe.Event) error {
 	_, err = tx.Exec(`
 	UPDATE stripe
 	SET subscription_status = 'past_due',
-		cancel_at_period_end = true,
-		updated_at = now()
+		cancel_at_period_end = true
 	WHERE stripe_customer_id = $1
 `, custmoreID)
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
 	}
 
-	_, err = tx.Exec(`UPDATE users SET post_api_calls = 5, edit_api_calls = 5, edit_api_calls  =5 WHERE uuid = $1`, userID)
+	_, err = tx.Exec(`UPDATE users SET account_type = 'basic', post_api_calls = 5, edit_api_calls = 5, edit_api_calls  =5 WHERE uuid = $1`, userID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update user record: %w", err)
 	}
-	
+
 	return nil
 
 }

@@ -132,7 +132,7 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, "Successfully canceled!")
+	utils.SendJSON(w, http.StatusOK)
 
 }
 
@@ -191,6 +191,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	case "customer.subscription.deleted":
 
+		fmt.Println("I am also called")
 		err := utils.HandleSubscriptionDeleted(s.Db, event)
 
 		if err != nil {
