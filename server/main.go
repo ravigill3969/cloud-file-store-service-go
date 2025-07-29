@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,13 +30,6 @@ func main() {
 	}
 
 	db, err := database.ConnectDB()
-
-	go func() {
-		for {
-			utils.CleanupSoftDeletedImages(db) // your cleanup logic
-			time.Sleep(24 * time.Hour)
-		}
-	}()
 
 	if err != nil {
 		log.Fatalf("Database connection failed: %v", err)
@@ -108,6 +102,13 @@ func main() {
 	stripeHandler := &handlers.Stripe{
 		Db: db,
 	}
+
+	go func() {
+		for {
+			utils.CleanupDeletedImages(context.Background(), db, s3Client, bucket)
+			time.Sleep(24 * time.Hour)
+		}
+	}()
 
 	mux.HandleFunc("/webhook", stripeHandler.HandleWebhook)
 	routes.RegisterUserRoutes(mux, userHandler, redisClient)
