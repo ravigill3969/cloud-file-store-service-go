@@ -277,8 +277,6 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 		&image.URL,
 	)
 
-	fmt.Println(image.UserID, "user u f vjenkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkrvkenvoreknv;werjvne")
-
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "Image not found", http.StatusNotFound)
