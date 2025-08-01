@@ -966,7 +966,7 @@ func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDContextKey)
 
 	res, err := fh.DB.Exec(
-		`UPDATE images SET deleted = TRUE, deleted_at = now() WHERE id = $1 AND user_id = $2`,
+		`UPDATE images SET deleted = TRUE, deleted_at = now() WHERE id = $1 AND user_id = $2 AND deleted = false`,
 		imageID, userID,
 	)
 
@@ -979,9 +979,14 @@ func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rowsAffected, _ := res.RowsAffected()
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Could not determine deletion result")
+		return
+	}
+
 	if rowsAffected == 0 {
-		http.Error(w, "No image deleted (maybe wrong ID or unauthorized)", http.StatusNotFound)
+		utils.SendError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
 		return
 	}
 

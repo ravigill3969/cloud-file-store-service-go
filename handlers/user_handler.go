@@ -115,12 +115,12 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var loginForm models.LoginForm
 	if err := json.NewDecoder(r.Body).Decode(&loginForm); err != nil {
 		log.Printf("Error decoding login request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "All fields are required")
 		return
 	}
 
 	if loginForm.Password == "" || (loginForm.Username == "" && loginForm.Email == "") {
-		http.Error(w, "username/email and password are required", http.StatusBadRequest)
+		utils.SendError(w, http.StatusUnauthorized, "username/email and password are required!")
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if err == sql.ErrNoRows {
 		log.Printf("Login attempt failed: User not found for username/email: %s %s", loginForm.Username, loginForm.Email)
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	if err != nil {
@@ -154,7 +154,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if !utils.CheckPasswordHash(loginForm.Password, storedUser.PasswordHash) {
 		log.Printf("Login attempt failed: Password mismatch for user %s", storedUser.Username)
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
@@ -163,7 +163,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	tokenStringForAccess, err := utils.CreateToken(storedUser.UUID.String(), 3, []byte(accessJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
@@ -172,7 +172,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	tokenStringForRefresh, err := utils.CreateToken(storedUser.UUID.String(), 10, []byte(refreshJWTKey))
 	if err != nil {
 		log.Printf("Error creating token during register: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Internal server error")
 		return
 	}
 
@@ -186,11 +186,9 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	err = h.RedisClient.Set(redisOpCtx, key, tokenStringForRefresh, 24*time.Hour).Err()
 	if err != nil {
 		log.Printf("Error saving refresh token to Redis: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Internal server error")
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
 
 	utils.SendJSON(w, http.StatusOK)
 
@@ -226,7 +224,7 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 
 	if !ok {
 		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -249,10 +247,10 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("User not found for ID: %s", userID)
-			http.Error(w, "User not found", http.StatusNotFound)
+			utils.SendError(w, http.StatusNotFound, "User not found")
 		} else {
 			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
-			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		}
 		return
 	}
@@ -272,7 +270,7 @@ func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 	if !ok {
 		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Invalid user!")
 		return
 	}
 
@@ -282,16 +280,17 @@ func (h *UserHandler) GetSecretKey(w http.ResponseWriter, r *http.Request) {
 	if err := row.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.SecretKey); err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("User not found for ID: %s", userId)
-			http.Error(w, "User not found", http.StatusNotFound)
+			utils.SendError(w, http.StatusNotFound, "Not found!")
+
 		} else {
 			log.Printf("Database error while fetching user info for ID %s: %v", userId, err)
-			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error!")
 		}
 		return
 	}
 
 	if !utils.CheckPasswordHash(password.Password, user.PasswordHash) {
-		http.Error(w, "Incorrect password", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Invalid password")
 		return
 	}
 
@@ -308,7 +307,7 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		log.Printf("Auth failed: Error reading cookie: %v", err)
-		http.Error(w, "Bad Request", http.StatusBadRequest)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -365,14 +364,14 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "Secret key is required", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Secret key is required")
 		return
 	}
 
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 	if !ok {
 		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -382,7 +381,7 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 	if err := row.Scan(&user.Username, &user.PasswordHash, &user.Email, &user.SecretKey); err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("User not found for ID: %s", userID)
-			http.Error(w, "User not found", http.StatusNotFound)
+			utils.SendError(w, http.StatusNotFound, "Unauthorized")
 		} else {
 			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
 			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
@@ -391,21 +390,21 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if user.SecretKey != body.SecretKey {
-		http.Error(w, "Invalid secret key", http.StatusBadRequest)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	newSecretKey, err := utils.GenerateKey(32)
 
 	if err != nil {
-		http.Error(w, "Unable to create new secret key", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusUnauthorized, "Internal server error")
 		return
 	}
 
 	_, err = h.DB.Exec(`UPDATE users SET secret_key = $1 WHERE uuid = $2`, &newSecretKey, &userID)
 
 	if err != nil {
-		http.Error(w, "Unable to update secret key", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Unable to update secret key")
 		return
 	}
 
@@ -417,7 +416,7 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Println("Failed to encode JSON response:", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 }
