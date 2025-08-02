@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	fileSizeLimitPerDayInMb = 100
+	fileSizeLimitPerDayInMb = 344
 )
 
 type FileHandler struct {
@@ -828,8 +828,8 @@ func (fh *FileHandler) serveFromCache(w http.ResponseWriter, photoID string) boo
 func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, photoID string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-
-	row := fh.DB.QueryRowContext(ctx, `SELECT url FROM images WHERE id = $1 AND deleted = FALSE`, photoID)
+	fmt.Println(photoID)
+	row := fh.DB.QueryRowContext(ctx, `SELECT url FROM images WHERE id = $1`, photoID)
 	var url string
 	err := row.Scan(&url)
 	if err != nil {
@@ -1023,4 +1023,69 @@ func removeImageFromRedis(photoID string, redisClient *redis.Client) error {
 		fmt.Printf("Failed to delete key %s from Redis: %v\n", key, err)
 	}
 	return err
+}
+
+//delete images functionality from here
+
+func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	if userID == "" {
+		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	rows, err := fh.DB.Query(`SELECT id FROM images WHERE deleted = true AND user_id = $1`, userID)
+	var images []string
+
+	defer rows.Close()
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	for rows.Next() {
+		var id string
+
+		if err := rows.Scan(&id); err != nil {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+			return
+		}
+
+		images = append(images, id)
+	}
+
+	res := map[string]any{
+		"status": "success",
+		"data":   images,
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(&res); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Unable to encode to json.")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (fh *FileHandler) RecoverDeletedImage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	if userID == "" {
+		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
 }
