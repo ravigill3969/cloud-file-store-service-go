@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1075,28 +1076,103 @@ func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.Respo
 
 func (fh *FileHandler) RecoverDeletedImage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
-	
+
 	if !ok {
 		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
-	
+
 	if userID == "" {
 		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
-	
+
 	id := r.URL.Query().Get("id")
-	
-	
+
 	if id == "" {
 		utils.SendError(w, http.StatusBadRequest, "id is required")
 		return
 	}
-	
+
 	result, err := fh.DB.Exec(`UPDATE images SET deleted = false, deleted_at = NULL WHERE id = $1 AND user_id = $2`, id, userID)
-	
+
 	fmt.Println(err)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if rowsAffected == 0 {
+		utils.SendError(w, http.StatusUnauthorized, "No image found")
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK)
+
+}
+
+func (fh *FileHandler) DeleteDeletedImagesPermanently(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	if userID == "" {
+		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+
+	if id == "" {
+		utils.SendError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	var key string
+
+	err := fh.DB.QueryRow(
+		`SELECT s3_key FROM images WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	).Scan(&key)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			utils.SendError(w, http.StatusNotFound, "Image not found")
+		} else {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	bucket := os.Getenv("AWS_BUCKET_NAME")
+	if bucket == "" {
+		log.Println("AWS_BUCKET_NAME environment variable is not set")
+		utils.SendError(w, http.StatusInternalServerError, "Missing bucket name")
+		return
+	}
+
+	_, err = fh.S3Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Failed to delete from S3")
+		return
+	}
+
+	result, err := fh.DB.Exec(`DELETE FROM images WHERE id = $1 AND user_id = $2`, id, userID)
+
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		return
