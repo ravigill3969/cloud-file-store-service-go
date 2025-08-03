@@ -225,8 +225,6 @@ func validateContentType(contentType string) error {
 func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
 
-	// /api/file/edit/{id}/{publicKey}/secure/{secretKey}
-
 	if len(parsedURL) < 7 {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
@@ -1077,15 +1075,45 @@ func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.Respo
 
 func (fh *FileHandler) RecoverDeletedImage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
-
+	
 	if !ok {
 		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
-
+	
 	if userID == "" {
 		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
+	
+	id := r.URL.Query().Get("id")
+	
+	
+	if id == "" {
+		utils.SendError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	
+	result, err := fh.DB.Exec(`UPDATE images SET deleted = false, deleted_at = NULL WHERE id = $1 AND user_id = $2`, id, userID)
+	
+	fmt.Println(err)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if rowsAffected == 0 {
+		utils.SendError(w, http.StatusUnauthorized, "No image found")
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK)
 
 }

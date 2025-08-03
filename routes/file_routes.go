@@ -17,6 +17,7 @@ func FileRoutes(mux *http.ServeMux, fh *handlers.FileHandler, redis *redis.Clien
 	mux.Handle("GET /api/file/download", authMw.AuthMiddleware(http.HandlerFunc(fh.DownloadFile)))
 	mux.Handle("GET /api/file/deleted-images", authMw.AuthMiddleware(http.HandlerFunc(fh.GetAllImagesWithUserIDWhichAreDeletedEqFalse)))
 	mux.Handle("DELETE /api/file/delete", authMw.AuthMiddleware(http.HandlerFunc(fh.DeleteImages)))
+	mux.Handle("PATCH /api/file/recover", authMw.AuthMiddleware(http.HandlerFunc(fh.RecoverDeletedImage)))
 
 	// mux.HandleFunc("GET /api/file/get/{id}", fh.ServeFileWithIDForUI)
 	mux.HandleFunc("GET /api/file/get-file/{id}", fh.ServeFileWithIDForThirdParty)
