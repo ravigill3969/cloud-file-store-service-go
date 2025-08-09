@@ -956,6 +956,20 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func removeImageFromRedis(photoID string, redisClient *redis.Client) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	key := fmt.Sprintf("image:%s", photoID)
+	err := redisClient.Del(ctx, key).Err()
+	if err != nil {
+		fmt.Printf("Failed to delete key %s from Redis: %v\n", key, err)
+	}
+	return err
+}
+
+//delete images functionality from here
+
 func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 	imageID := r.URL.Query().Get("iid") //iid := image id
 	// s3Key := r.URL.Query().Get("s3_key")   //from ii, one i is for image
@@ -1011,20 +1025,6 @@ func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 
 	go removeImageFromRedis(imageID, fh.Redis)
 }
-
-func removeImageFromRedis(photoID string, redisClient *redis.Client) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	key := fmt.Sprintf("image:%s", photoID)
-	err := redisClient.Del(ctx, key).Err()
-	if err != nil {
-		fmt.Printf("Failed to delete key %s from Redis: %v\n", key, err)
-	}
-	return err
-}
-
-//delete images functionality from here
 
 func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
@@ -1192,4 +1192,7 @@ func (fh *FileHandler) DeleteDeletedImagesPermanently(w http.ResponseWriter, r *
 
 	utils.SendJSON(w, http.StatusOK)
 
+	go removeImageFromRedis(id, fh.Redis)
+
 }
+
