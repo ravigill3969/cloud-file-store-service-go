@@ -45,7 +45,6 @@ func SendError(w http.ResponseWriter, statusCode int, message string) {
 	}
 }
 
-
 func SendJSONToThirdParty(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)

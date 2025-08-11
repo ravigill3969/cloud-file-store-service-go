@@ -1196,3 +1196,155 @@ func (fh *FileHandler) DeleteDeletedImagesPermanently(w http.ResponseWriter, r *
 
 }
 
+func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w http.ResponseWriter, r *http.Request) {
+	parsedURL := strings.Split(r.URL.Path, "/")
+
+	if len(parsedURL) < 4 {
+		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		return
+	}
+
+	userID := r.Context().Value(middleware.UserIDContextKey)
+
+	fmt.Println(userID)
+
+	imageID := parsedURL[4]
+	widthStr := r.URL.Query().Get("width")
+	heightStr := r.URL.Query().Get("height")
+
+	widthInt, err := strconv.Atoi(widthStr)
+	heightInt, errH := strconv.Atoi(heightStr)
+
+	if err != nil || errH != nil {
+		http.Error(w, "Width and height are required and must be integers", http.StatusBadRequest)
+		return
+	}
+
+	type Image struct {
+		ID               uuid.UUID `json:"id"`
+		UserID           uuid.UUID `json:"user_id"`
+		S3Key            string    `json:"s3_key"`
+		OriginalFilename string    `json:"original_filename"`
+		MimeType         string    `json:"mime_type"`
+		FileSize         int64     `json:"file_size_bytes"`
+		UploadDate       time.Time `json:"upload_date"`
+		Width            int16     `json:"width"`
+		Height           int16     `json:"height"`
+		URL              string    `json:"url"`
+	}
+
+	var image Image
+
+	err = fh.DB.QueryRow(`
+        SELECT 
+            id, user_id, s3_key, original_filename, mime_type, file_size_bytes, upload_date, width, height, url FROM images WHERE id = $1 AND deleted = FALSE`, imageID).Scan(
+		&image.ID,
+		&image.UserID,
+		&image.S3Key,
+		&image.OriginalFilename,
+		&image.MimeType,
+		&image.FileSize,
+		&image.UploadDate,
+		&image.Width,
+		&image.Height,
+		&image.URL,
+	)
+
+	if err != nil {
+		fmt.Println(err)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Image not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if widthInt == int(image.Width) && heightInt == int(image.Height) {
+		utils.SendJSON(w, http.StatusOK, map[string]string{
+			"id":  image.ID.String(),
+			"url": image.URL,
+		})
+		return
+	}
+
+	str, key, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
+	if err != nil {
+		http.Error(w, "Image resize failed", http.StatusInternalServerError)
+		return
+	}
+
+	tx, err := fh.DB.Begin()
+	if err != nil {
+		log.Println("Failed to start transaction:", err)
+		http.Error(w, "Server error", http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	query := `
+		INSERT INTO images (
+			user_id, s3_key, original_filename,
+			mime_type, file_size_bytes, upload_date,
+			url, width, height
+		) VALUES (
+			$1, $2, $3, $4,
+			$5, $6, $7,
+			$8, $9
+		) RETURNING id
+	`
+
+	var imageIDEdit uuid.UUID
+	err = tx.QueryRow(query,
+		image.UserID, key, image.OriginalFilename,
+		image.MimeType, image.FileSize, image.UploadDate,
+		str, int16(widthInt), int16(heightInt),
+	).Scan(&imageIDEdit)
+
+	if err != nil {
+		log.Println("Image insert failed:", err)
+		http.Error(w, "Failed to insert image", http.StatusInternalServerError)
+		return
+	}
+
+	// You now have access to the inserted image ID
+	log.Println("Inserted image ID:", imageIDEdit)
+
+	// publicKey := parsedURL[5]
+	// secretKey := parsedURL[7]
+
+	res, err := tx.Exec(`
+    UPDATE users
+    SET edit_api_calls = edit_api_calls - 1
+    WHERE uuid = $1 
+`, userID)
+	if err != nil {
+		log.Println("Failed to decrement edit_api_calls:", err)
+		http.Error(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		log.Println("Error checking quota update:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if rowsAffected == 0 {
+		http.Error(w, "Insufficient quota", http.StatusForbidden)
+		return
+	}
+
+	url := os.Getenv("BACKEND_URL")
+	imageURL := fmt.Sprintf("%s/api/file/get-file/%s", url, imageID)
+
+	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
+		"url": imageURL,
+	})
+}
