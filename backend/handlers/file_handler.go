@@ -25,10 +25,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager/s3manageriface"
 	"github.com/google/uuid"
-	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
-	"github.com/ravigill3969/cloud-file-store/models"
-	"github.com/ravigill3969/cloud-file-store/utils"
+	middleware "github.com/ravigill3969/cloud-file-store/backend/middlewares"
+	"github.com/ravigill3969/cloud-file-store/backend/models"
+	"github.com/ravigill3969/cloud-file-store/backend/utils"
 	"github.com/redis/go-redis/v9"
+
+
 )
 
 const (

@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package video;
+
+// Go package option
+option go_package = "myproject/video;video";
+
+// Video upload service
+service VideoService {
+  rpc UploadVideo(UploadVideoRequest) returns (UploadVideoResponse);
+}
+
+message UploadVideoRequest {
+  string user_id = 1;
+  string original_filename = 2;
+  string mime_type = 3;
+  bytes file_data = 4;
+}
+
+message UploadVideoResponse {
+  bool success = 1;
+  string error_message = 2;
+  string video_url = 3;
+}

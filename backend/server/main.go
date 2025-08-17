@@ -14,14 +14,19 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/joho/godotenv"
+	"github.com/ravigill3969/cloud-file-store/backend/database"
+	"github.com/ravigill3969/cloud-file-store/backend/handlers"
+	middleware "github.com/ravigill3969/cloud-file-store/backend/middlewares"
+	"github.com/ravigill3969/cloud-file-store/backend/routes"
+	"github.com/ravigill3969/cloud-file-store/backend/utils"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/ravigill3969/cloud-file-store/database"
-	"github.com/ravigill3969/cloud-file-store/handlers"
-	middleware "github.com/ravigill3969/cloud-file-store/middlewares"
-	"github.com/ravigill3969/cloud-file-store/routes"
-	"github.com/ravigill3969/cloud-file-store/utils"
+	pb "github.com/ravigill3969/cloud-file-store-service-video-goGrpc/video"
 )
+
+
 
 func main() {
 	err := godotenv.Load(".env")
@@ -110,10 +115,28 @@ func main() {
 		}
 	}()
 
+	log.Println("Connecting to gRPC video service...")
+	grpcConn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to gRPC server: %v", err)
+	}
+	// It's critical to defer closing the connection
+	defer grpcConn.Close()
+
+	// Create the gRPC client
+
+	videoClient := pb.NewVideoServiceClient(grpcConn)
+
+	videoHandler := handlers.VideoHandler{
+		VideoClient: videoClient,
+		RedisClient: redisClient,
+	}
+
 	mux.HandleFunc("/webhook", stripeHandler.HandleWebhook)
 	routes.RegisterUserRoutes(mux, userHandler, redisClient)
 	routes.FileRoutes(mux, fileHandler, redisClient)
 	routes.StripeRoutes(mux, stripeHandler, redisClient)
+	routes.VideoRoutes(mux, &videoHandler, redisClient)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, http.StatusBadGateway, "This route donot exist")
@@ -124,6 +147,8 @@ func main() {
 			middleware.GlobalRateLimiter(redisClient)(mux),
 		),
 	)
+
+	log.Println("gRPC client for video service is ready.")
 
 	fmt.Printf("server is running on http://localhost:%s\n", PORT)
 
