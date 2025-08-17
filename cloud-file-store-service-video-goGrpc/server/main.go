@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 
+	"github.com/joho/godotenv"
+
+	"github.com/grpc/database"
 	pb "github.com/grpc/video"
 	"google.golang.org/grpc"
-)	
+)
 
 // server implements pb.VideoServiceServer
 type server struct {
@@ -37,8 +39,22 @@ func (s *server) UploadVideo(ctx context.Context, req *pb.UploadVideoRequest) (*
 }
 
 func main() {
-	// Make sure upload folder exists
-	_ = ioutil.WriteFile("./uploads/.keep", []byte{}, 0644)
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatalf("Error loading .env file: %s", err)
+	}
+
+	db, err := database.ConnectDB()
+
+	if err != nil {
+		log.Fatalf("Database connection failed: %v", err)
+	}
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database connection: %v", closeErr)
+		}
+		fmt.Println("Database connection closed.")
+	}()
 
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {

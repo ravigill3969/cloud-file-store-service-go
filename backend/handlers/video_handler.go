@@ -13,5 +13,6 @@ type VideoHandler struct {
 }
 
 func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
-	v.VideoClient.UploadVideo(r.Context(), &pb.UploadVideoRequest{UserId: })
+
+	v.VideoClient.UploadVideo(r.Context(), &pb.UploadVideoRequest{ })
 }
