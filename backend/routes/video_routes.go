@@ -13,6 +13,6 @@ func VideoRoutes(mux *http.ServeMux, v *handlers.VideoHandler, redis *redis.Clie
 		RedisClient: redis,
 	}
 
-	mux.Handle("GET /api/video/upload", authMw.AuthMiddleware((http.HandlerFunc(v.VideoUpload))))
+	mux.Handle("POST /api/video/upload", authMw.AuthMiddleware((http.HandlerFunc(v.VideoUpload))))
 
 }

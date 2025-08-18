@@ -2,19 +2,22 @@ syntax = "proto3";
 
 package video;
 
-// Go package option
-option go_package = "myproject/video;video";
+option go_package = ".;video";
 
 // Video upload service
 service VideoService {
-  rpc UploadVideo(UploadVideoRequest) returns (UploadVideoResponse);
+  // Client streams chunks of the video to the server
+  rpc UploadVideo(stream UploadVideoRequest) returns (UploadVideoResponse);
 }
 
+// Each message represents a chunk of the video
 message UploadVideoRequest {
   string user_id = 1;
   string original_filename = 2;
   string mime_type = 3;
-  bytes file_data = 4;
+  bytes chunk_data = 4; // Partial video data
+  int32 chunk_number = 5; // Optional: track chunk order
+  bool is_last_chunk = 6; // Optional: signal last chunk
 }
 
 message UploadVideoResponse {

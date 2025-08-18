@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v3.21.12
-// source: video.proto
+// source: video/video.proto
 
 package video
 
@@ -28,8 +28,7 @@ const (
 //
 // Video upload service
 type VideoServiceClient interface {
-	// Client streams chunks of the video to the server
-	UploadVideo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadVideoRequest, UploadVideoResponse], error)
+	UploadVideo(ctx context.Context, in *UploadVideoRequest, opts ...grpc.CallOption) (*UploadVideoResponse, error)
 }
 
 type videoServiceClient struct {
@@ -40,18 +39,15 @@ func NewVideoServiceClient(cc grpc.ClientConnInterface) VideoServiceClient {
 	return &videoServiceClient{cc}
 }
 
-func (c *videoServiceClient) UploadVideo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadVideoRequest, UploadVideoResponse], error) {
+func (c *videoServiceClient) UploadVideo(ctx context.Context, in *UploadVideoRequest, opts ...grpc.CallOption) (*UploadVideoResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &VideoService_ServiceDesc.Streams[0], VideoService_UploadVideo_FullMethodName, cOpts...)
+	out := new(UploadVideoResponse)
+	err := c.cc.Invoke(ctx, VideoService_UploadVideo_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[UploadVideoRequest, UploadVideoResponse]{ClientStream: stream}
-	return x, nil
+	return out, nil
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VideoService_UploadVideoClient = grpc.ClientStreamingClient[UploadVideoRequest, UploadVideoResponse]
 
 // VideoServiceServer is the server API for VideoService service.
 // All implementations must embed UnimplementedVideoServiceServer
@@ -59,8 +55,7 @@ type VideoService_UploadVideoClient = grpc.ClientStreamingClient[UploadVideoRequ
 //
 // Video upload service
 type VideoServiceServer interface {
-	// Client streams chunks of the video to the server
-	UploadVideo(grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]) error
+	UploadVideo(context.Context, *UploadVideoRequest) (*UploadVideoResponse, error)
 	mustEmbedUnimplementedVideoServiceServer()
 }
 
@@ -71,8 +66,8 @@ type VideoServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedVideoServiceServer struct{}
 
-func (UnimplementedVideoServiceServer) UploadVideo(grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]) error {
-	return status.Errorf(codes.Unimplemented, "method UploadVideo not implemented")
+func (UnimplementedVideoServiceServer) UploadVideo(context.Context, *UploadVideoRequest) (*UploadVideoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UploadVideo not implemented")
 }
 func (UnimplementedVideoServiceServer) mustEmbedUnimplementedVideoServiceServer() {}
 func (UnimplementedVideoServiceServer) testEmbeddedByValue()                      {}
@@ -95,12 +90,23 @@ func RegisterVideoServiceServer(s grpc.ServiceRegistrar, srv VideoServiceServer)
 	s.RegisterService(&VideoService_ServiceDesc, srv)
 }
 
-func _VideoService_UploadVideo_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(VideoServiceServer).UploadVideo(&grpc.GenericServerStream[UploadVideoRequest, UploadVideoResponse]{ServerStream: stream})
+func _VideoService_UploadVideo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UploadVideoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).UploadVideo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_UploadVideo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).UploadVideo(ctx, req.(*UploadVideoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type VideoService_UploadVideoServer = grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]
 
 // VideoService_ServiceDesc is the grpc.ServiceDesc for VideoService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -108,13 +114,12 @@ type VideoService_UploadVideoServer = grpc.ClientStreamingServer[UploadVideoRequ
 var VideoService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "video.VideoService",
 	HandlerType: (*VideoServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
-	Streams: []grpc.StreamDesc{
+	Methods: []grpc.MethodDesc{
 		{
-			StreamName:    "UploadVideo",
-			Handler:       _VideoService_UploadVideo_Handler,
-			ClientStreams: true,
+			MethodName: "UploadVideo",
+			Handler:    _VideoService_UploadVideo_Handler,
 		},
 	},
-	Metadata: "video.proto",
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "video/video.proto",
 }

@@ -1,53 +1,39 @@
 package main
 
 import (
-	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net"
+	"os"
 
 	"github.com/joho/godotenv"
 
 	"github.com/grpc/database"
+	"github.com/grpc/handlers"
+	"github.com/grpc/utils"
 	pb "github.com/grpc/video"
 	"google.golang.org/grpc"
 )
 
-// server implements pb.VideoServiceServer
-type server struct {
-	pb.UnimplementedVideoServiceServer
-}
-
-func (s *server) UploadVideo(ctx context.Context, req *pb.UploadVideoRequest) (*pb.UploadVideoResponse, error) {
-	// For simplicity, save the file locally with the original filename
-	// filename := fmt.Sprintf("./uploads/%s", req.OriginalFilename)
-	// err := ioutil.WriteFile(filename, req.FileData, 0644)
-	// if err != nil {
-	// 	return &pb.UploadVideoResponse{
-	// 		Success:      false,
-	// 		ErrorMessage: fmt.Sprintf("failed to save file: %v", err),
-	// 	}, nil
-	// }
-
-	// Construct a fake URL (replace with S3 URL in production)
-	videoURL := fmt.Sprintf("http://localhost:8080/uploads/%s", req.OriginalFilename)
-
-	return &pb.UploadVideoResponse{
-		Success:  true,
-		VideoUrl: videoURL,
-	}, nil
-}
-
-func main() {
-	err := godotenv.Load(".env")
+// -------------------- DB --------------------
+func initDB() (*sql.DB, error) {
+	db, err := database.ConnectDB()
 	if err != nil {
+		return nil, fmt.Errorf("Database connection failed: %w", err)
+	}
+	return db, nil
+}
+
+// -------------------- Main --------------------
+func main() {
+	if err := godotenv.Load(".env"); err != nil {
 		log.Fatalf("Error loading .env file: %s", err)
 	}
 
-	db, err := database.ConnectDB()
-
+	db, err := initDB()
 	if err != nil {
-		log.Fatalf("Database connection failed: %v", err)
+		log.Fatal(err)
 	}
 	defer func() {
 		if closeErr := db.Close(); closeErr != nil {
@@ -56,15 +42,38 @@ func main() {
 		fmt.Println("Database connection closed.")
 	}()
 
-	lis, err := net.Listen("tcp", ":50051")
+	s3Client, s3Uploader, bucket, err := utils.InitAWS()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	redisClient, err := utils.InitRedis()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	PORT := os.Getenv("PORT")
+	if PORT == "" {
+		PORT = ":50051"
+	}
+
+	lis, err := net.Listen("tcp", PORT)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	s := grpc.NewServer()
-	pb.RegisterVideoServiceServer(s, &server{})
+	server := &handlers.Server{
+		DB:         db,
+		S3Uploader: s3Uploader,
+		S3Client:   s3Client,
+		S3Bucket:   bucket,
+		Redis:      redisClient,
+	}
 
-	log.Println("gRPC server running on :50051")
+	s := grpc.NewServer()
+	pb.RegisterVideoServiceServer(s, server)
+
+	log.Println("gRPC server running on", PORT)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
