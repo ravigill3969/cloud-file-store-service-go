@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	VideoService_UploadVideo_FullMethodName = "/video.VideoService/UploadVideo"
+	VideoService_GetVideo_FullMethodName    = "/video.VideoService/GetVideo"
 )
 
 // VideoServiceClient is the client API for VideoService service.
@@ -30,6 +31,7 @@ const (
 type VideoServiceClient interface {
 	// Client streams chunks of the video to the server
 	UploadVideo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadVideoRequest, UploadVideoResponse], error)
+	GetVideo(ctx context.Context, in *GetVideoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetVideoResponse], error)
 }
 
 type videoServiceClient struct {
@@ -53,6 +55,25 @@ func (c *videoServiceClient) UploadVideo(ctx context.Context, opts ...grpc.CallO
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VideoService_UploadVideoClient = grpc.ClientStreamingClient[UploadVideoRequest, UploadVideoResponse]
 
+func (c *videoServiceClient) GetVideo(ctx context.Context, in *GetVideoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetVideoResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &VideoService_ServiceDesc.Streams[1], VideoService_GetVideo_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetVideoRequest, GetVideoResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VideoService_GetVideoClient = grpc.ServerStreamingClient[GetVideoResponse]
+
 // VideoServiceServer is the server API for VideoService service.
 // All implementations must embed UnimplementedVideoServiceServer
 // for forward compatibility.
@@ -61,6 +82,7 @@ type VideoService_UploadVideoClient = grpc.ClientStreamingClient[UploadVideoRequ
 type VideoServiceServer interface {
 	// Client streams chunks of the video to the server
 	UploadVideo(grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]) error
+	GetVideo(*GetVideoRequest, grpc.ServerStreamingServer[GetVideoResponse]) error
 	mustEmbedUnimplementedVideoServiceServer()
 }
 
@@ -73,6 +95,9 @@ type UnimplementedVideoServiceServer struct{}
 
 func (UnimplementedVideoServiceServer) UploadVideo(grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method UploadVideo not implemented")
+}
+func (UnimplementedVideoServiceServer) GetVideo(*GetVideoRequest, grpc.ServerStreamingServer[GetVideoResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method GetVideo not implemented")
 }
 func (UnimplementedVideoServiceServer) mustEmbedUnimplementedVideoServiceServer() {}
 func (UnimplementedVideoServiceServer) testEmbeddedByValue()                      {}
@@ -102,6 +127,17 @@ func _VideoService_UploadVideo_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VideoService_UploadVideoServer = grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]
 
+func _VideoService_GetVideo_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetVideoRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VideoServiceServer).GetVideo(m, &grpc.GenericServerStream[GetVideoRequest, GetVideoResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type VideoService_GetVideoServer = grpc.ServerStreamingServer[GetVideoResponse]
+
 // VideoService_ServiceDesc is the grpc.ServiceDesc for VideoService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +150,11 @@ var VideoService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "UploadVideo",
 			Handler:       _VideoService_UploadVideo_Handler,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "GetVideo",
+			Handler:       _VideoService_GetVideo_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "video.proto",

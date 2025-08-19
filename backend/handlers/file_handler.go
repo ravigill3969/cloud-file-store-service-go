@@ -29,8 +29,6 @@ import (
 	"github.com/ravigill3969/cloud-file-store/backend/models"
 	"github.com/ravigill3969/cloud-file-store/backend/utils"
 	"github.com/redis/go-redis/v9"
-
-
 )
 
 const (
@@ -636,8 +634,8 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 
 		}(fileHeader)
 
-		wg.Wait()
 	}
+	wg.Wait()
 	close(success)
 	close(errChn)
 

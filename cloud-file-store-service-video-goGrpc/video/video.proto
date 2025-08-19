@@ -8,16 +8,27 @@ option go_package = ".;video";
 service VideoService {
   // Client streams chunks of the video to the server
   rpc UploadVideo(stream UploadVideoRequest) returns (UploadVideoResponse);
+  rpc GetVideo(GetVideoRequest) returns (stream GetVideoResponse);
 }
 
-// Each message represents a chunk of the video
+message GetVideoRequest {
+  string vid = 1;
+}
+
+message GetVideoResponse {
+  bytes chunk_data = 1;
+  int32 chunk_number = 2;
+  bool is_last_chunk = 3;
+}
+
 message UploadVideoRequest {
   string user_id = 1;
   string original_filename = 2;
   string mime_type = 3;
-  bytes chunk_data = 4; // Partial video data
-  int32 chunk_number = 5; // Optional: track chunk order
-  bool is_last_chunk = 6; // Optional: signal last chunk
+  bytes chunk_data = 4;        // Partial video data
+  int32 chunk_number = 5;      // Optional: track chunk order
+  bool is_last_chunk = 6;      // Optional: signal last chunk
+  int64 file_size = 7;         // Total file size in bytes
 }
 
 message UploadVideoResponse {
@@ -25,3 +36,4 @@ message UploadVideoResponse {
   string error_message = 2;
   string video_url = 3;
 }
+
