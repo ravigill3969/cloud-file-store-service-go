@@ -14,6 +14,6 @@ func VideoRoutes(mux *http.ServeMux, v *handlers.VideoHandler, redis *redis.Clie
 	}
 
 	mux.Handle("POST /api/video/upload", authMw.AuthMiddleware((http.HandlerFunc(v.VideoUpload))))
-	mux.Handle("GET /api/video/watch", authMw.AuthMiddleware((http.HandlerFunc(v.GetVideoWithIDandServeItInChunks))))
+	mux.HandleFunc("GET /api/video/watch/", v.GetVideoWithIDandServeItInChunks)
 
 }

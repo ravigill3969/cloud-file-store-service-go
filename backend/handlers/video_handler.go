@@ -145,7 +145,10 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r *http.Request) {
+
 	vid := r.URL.Query().Get("vid")
+
+	fmt.Println(r.Header.Get("Range"))
 
 	if vid == "" {
 		utils.SendError(w, http.StatusBadRequest, "Invalid Id")
@@ -161,25 +164,62 @@ func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r
 		return
 	}
 
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	flusher, _ := w.(http.Flusher)
+
 	for {
 		resp, err := stream.Recv()
-
+		fmt.Println(err)
 		if err == io.EOF {
 			break
 		}
-
 		if err != nil {
-			http.Error(w, "Error streaming video", http.StatusInternalServerError)
+			http.Error(w, "error streaming video", http.StatusInternalServerError)
 			return
 		}
 
-		_, err = w.Write(resp.ChunkData)
-
-		if resp.IsLastChunk {
-			break
+		if _, err := w.Write(resp.ChunkData); err != nil {
+			return
 		}
-
-		w.(http.Flusher).Flush()
+		flusher.Flush()
 	}
 
 }
+
+func (v *VideoHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Request) {
+	vid := r.URL.Query().Get("vid")
+	userId := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	resp, err := v.VideoClient.DeleteVideo(r.Context(), &pb.DeleteVideoRequest{
+		UserID: userId,
+		Vid:    vid,
+	})
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Intenal server error")
+		return
+	}
+
+	if resp.Success {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusInternalServerError)
+
+	}
+
+	w.Header().Set("Content-type", "application/json")
+
+	response := map[string]any{
+		"Status":  resp.Success,
+		"message": resp.Message,
+	}
+
+	if err = json.NewEncoder(w).Encode(response); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Unable to encode to json")
+	}
+
+}
+

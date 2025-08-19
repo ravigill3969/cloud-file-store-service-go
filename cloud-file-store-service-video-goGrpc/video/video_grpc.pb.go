@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	VideoService_UploadVideo_FullMethodName = "/video.VideoService/UploadVideo"
 	VideoService_GetVideo_FullMethodName    = "/video.VideoService/GetVideo"
+	VideoService_DeleteVideo_FullMethodName = "/video.VideoService/DeleteVideo"
 )
 
 // VideoServiceClient is the client API for VideoService service.
@@ -32,6 +33,7 @@ type VideoServiceClient interface {
 	// Client streams chunks of the video to the server
 	UploadVideo(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadVideoRequest, UploadVideoResponse], error)
 	GetVideo(ctx context.Context, in *GetVideoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetVideoResponse], error)
+	DeleteVideo(ctx context.Context, in *DeleteVideoRequest, opts ...grpc.CallOption) (*DeleteVideoResponse, error)
 }
 
 type videoServiceClient struct {
@@ -74,6 +76,16 @@ func (c *videoServiceClient) GetVideo(ctx context.Context, in *GetVideoRequest, 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VideoService_GetVideoClient = grpc.ServerStreamingClient[GetVideoResponse]
 
+func (c *videoServiceClient) DeleteVideo(ctx context.Context, in *DeleteVideoRequest, opts ...grpc.CallOption) (*DeleteVideoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteVideoResponse)
+	err := c.cc.Invoke(ctx, VideoService_DeleteVideo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VideoServiceServer is the server API for VideoService service.
 // All implementations must embed UnimplementedVideoServiceServer
 // for forward compatibility.
@@ -83,6 +95,7 @@ type VideoServiceServer interface {
 	// Client streams chunks of the video to the server
 	UploadVideo(grpc.ClientStreamingServer[UploadVideoRequest, UploadVideoResponse]) error
 	GetVideo(*GetVideoRequest, grpc.ServerStreamingServer[GetVideoResponse]) error
+	DeleteVideo(context.Context, *DeleteVideoRequest) (*DeleteVideoResponse, error)
 	mustEmbedUnimplementedVideoServiceServer()
 }
 
@@ -98,6 +111,9 @@ func (UnimplementedVideoServiceServer) UploadVideo(grpc.ClientStreamingServer[Up
 }
 func (UnimplementedVideoServiceServer) GetVideo(*GetVideoRequest, grpc.ServerStreamingServer[GetVideoResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method GetVideo not implemented")
+}
+func (UnimplementedVideoServiceServer) DeleteVideo(context.Context, *DeleteVideoRequest) (*DeleteVideoResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteVideo not implemented")
 }
 func (UnimplementedVideoServiceServer) mustEmbedUnimplementedVideoServiceServer() {}
 func (UnimplementedVideoServiceServer) testEmbeddedByValue()                      {}
@@ -138,13 +154,36 @@ func _VideoService_GetVideo_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type VideoService_GetVideoServer = grpc.ServerStreamingServer[GetVideoResponse]
 
+func _VideoService_DeleteVideo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteVideoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VideoServiceServer).DeleteVideo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VideoService_DeleteVideo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VideoServiceServer).DeleteVideo(ctx, req.(*DeleteVideoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VideoService_ServiceDesc is the grpc.ServiceDesc for VideoService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var VideoService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "video.VideoService",
 	HandlerType: (*VideoServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "DeleteVideo",
+			Handler:    _VideoService_DeleteVideo_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "UploadVideo",

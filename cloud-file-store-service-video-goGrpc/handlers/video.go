@@ -30,7 +30,6 @@ func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 	defer pr.Close()
 	uploadDone := make(chan error, 1)
 
-	// Receive first chunk to get metadata
 	req, err := stream.Recv()
 	if err != nil {
 		return err
@@ -117,9 +116,10 @@ func (s *Server) SaveToDB(userId string, s3Key, filename, mimeType string, fileS
 	return id, nil
 }
 
-func (s *Server) ServeVideo(req *pb.GetVideoRequest, stream pb.VideoService_GetVideoServer) error {
+func (s *Server) GetVideo(req *pb.GetVideoRequest, stream pb.VideoService_GetVideoServer) error {
 	vid := req.Vid
 
+	fmt.Println("hit")
 	s3Key, err := s.GetS3Key(vid)
 
 	if err != nil {
@@ -134,7 +134,6 @@ func (s *Server) ServeVideo(req *pb.GetVideoRequest, stream pb.VideoService_GetV
 	if err != nil {
 		return fmt.Errorf("failed to get S3 object: %w", err)
 	}
-
 	defer resp.Body.Close()
 
 	buf := make([]byte, 1024*1024*5)
@@ -145,14 +144,14 @@ func (s *Server) ServeVideo(req *pb.GetVideoRequest, stream pb.VideoService_GetV
 		if err != nil && err != io.EOF {
 			return fmt.Errorf("error reading S3 object: %w", err)
 		}
-		if n == 0 {
-			break
-		}
 
-		if err := stream.Send(&pb.GetVideoResponse{
-			ChunkData: buf[:n],
-		}); err != nil {
-			return fmt.Errorf("failed to send chunk: %w", err)
+		if n > 0 {
+			if err := stream.Send(&pb.GetVideoResponse{
+				ChunkData: buf[:n],
+			}); err != nil {
+
+				return fmt.Errorf("failed to send chunk: %w", err)
+			}
 		}
 
 		if err == io.EOF {
@@ -161,7 +160,6 @@ func (s *Server) ServeVideo(req *pb.GetVideoRequest, stream pb.VideoService_GetV
 	}
 
 	return nil
-
 }
 
 func (s *Server) GetS3Key(vid string) (string, error) {
@@ -174,4 +172,43 @@ func (s *Server) GetS3Key(vid string) (string, error) {
 		return "", fmt.Errorf("internal server error: %w", err)
 	}
 	return s3Key, nil
+}
+
+func (s *Server) DeleteVideo(ctx context.Context, req *pb.DeleteVideoRequest) (*pb.DeleteVideoResponse, error) {
+	vid := req.Vid
+	userID := req.UserID
+
+	// Delete the video from the database
+	res, err := s.DB.Exec(`DELETE FROM videos WHERE id = $1 AND user_id = $2`, vid, userID)
+	if err != nil {
+		return &pb.DeleteVideoResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to delete video: %v", err),
+		}, nil
+	}
+
+	count, err := res.RowsAffected()
+	if err != nil {
+		return &pb.DeleteVideoResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to get affected rows: %v", err),
+		}, nil
+	}
+
+	if count == 0 {
+		return &pb.DeleteVideoResponse{
+			Success: false,
+			Message: "no video found with this ID for the user",
+		}, nil
+	}
+
+	return &pb.DeleteVideoResponse{
+		Success: true,
+		Message: "video deleted successfully",
+	}, nil
+}
+
+func (s *Server) DeleteVideoFromDB(userID string, vid string) error {
+
+	return nil
 }

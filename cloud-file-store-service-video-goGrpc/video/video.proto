@@ -9,6 +9,17 @@ service VideoService {
   // Client streams chunks of the video to the server
   rpc UploadVideo(stream UploadVideoRequest) returns (UploadVideoResponse);
   rpc GetVideo(GetVideoRequest) returns (stream GetVideoResponse);
+  rpc DeleteVideo(DeleteVideoRequest) returns (DeleteVideoResponse);
+}
+
+message DeleteVideoRequest{
+  string userID =1;
+  string vid = 2;
+}
+
+message DeleteVideoResponse{
+  bool success = 1;
+  string message = 2;
 }
 
 message GetVideoRequest {
