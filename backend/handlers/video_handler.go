@@ -144,6 +144,7 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// this is both for ui and third party
 func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r *http.Request) {
 
 	vid := r.URL.Query().Get("vid")
@@ -223,3 +224,10 @@ func (v *VideoHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Requ
 
 }
 
+
+func (v *VideoHandler) UploadVideoForThirdParty(){
+	// /api/video/upload/{publicKey}/secret/{secretKey}
+	
+}
+
+func (v *VideoHandler) DeleteVideoForThirdParty(){}

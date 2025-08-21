@@ -208,7 +208,56 @@ func (s *Server) DeleteVideo(ctx context.Context, req *pb.DeleteVideoRequest) (*
 	}, nil
 }
 
-func (s *Server) DeleteVideoFromDB(userID string, vid string) error {
+func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFromThirdPartyServer) error {
+	pr, pw := io.Pipe()
+	defer pr.Close()
 
-	return nil
+	req, err := stream.Recv()
+
+	if err != nil {
+		return err
+	}
+
+	userID := req.UserId
+	originalFilename := req.OriginalFilename
+	// mime_type := req.MimeType
+	// file_size := req.FileSize
+
+	key := fmt.Sprintf("video/%s-%s-%s", userID, time.Now().Format("20060102-150405"), originalFilename)
+
+	go func() {
+		_, err := s.S3Uploader.Upload(context.Background(), &s3.PutObjectInput{
+			Bucket: &s.S3Bucket,
+			Key:    aws.String(key),
+			Body:   pr,
+		})
+
+	}()
+
+	if len(req.ChunkData) > 0 {
+		if _, err := pw.Write(req.ChunkData); err != nil {
+			pw.CloseWithError(err)
+			return err
+		}
+	}
+
+	for {
+		req, err := stream.Recv()
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		pw.Write(req.ChunkData)
+
+		if req.IsLastChunk {
+			break
+		}
+	}
+
+	pw.Close()
+
 }

@@ -10,7 +10,25 @@ service VideoService {
   rpc UploadVideo(stream UploadVideoRequest) returns (UploadVideoResponse);
   rpc GetVideo(GetVideoRequest) returns (stream GetVideoResponse);
   rpc DeleteVideo(DeleteVideoRequest) returns (DeleteVideoResponse);
+  rpc UploadVideoFromThirdParty(stream UploadVideoFromThirdPartyRequest) returns (UploadVideoFromThirdPartyResponse);
 }
+
+// Upload video from third site
+message UploadVideoFromThirdPartyRequest{
+  bool is_last_chunk = 1;
+  string user_id = 2;
+  bytes chunk_data = 3;
+  int64 file_size = 4;
+  string original_filename = 5;
+  string mime_type = 6;
+}
+
+message UploadVideoFromThirdPartyResponse{
+  bool success = 1;
+  string error_message = 2;
+  string video_url = 3;
+}
+
 
 message DeleteVideoRequest{
   string userID =1;
