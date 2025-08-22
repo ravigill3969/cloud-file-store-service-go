@@ -28,6 +28,7 @@ type Server struct {
 func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
+
 	uploadDone := make(chan error, 1)
 
 	req, err := stream.Recv()
@@ -45,8 +46,10 @@ func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 			Key:    aws.String(key),
 			Body:   pr,
 		})
+		if err != nil {
 
-		uploadDone <- err
+			uploadDone <- err
+		}
 	}()
 
 	if len(req.ChunkData) > 0 {
@@ -220,8 +223,8 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 
 	userID := req.UserId
 	originalFilename := req.OriginalFilename
-	// mime_type := req.MimeType
-	// file_size := req.FileSize
+
+	errorChn := make(chan error, 1)
 
 	key := fmt.Sprintf("video/%s-%s-%s", userID, time.Now().Format("20060102-150405"), originalFilename)
 
@@ -231,6 +234,10 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 			Key:    aws.String(key),
 			Body:   pr,
 		})
+
+		if err != nil {
+			errorChn <- err
+		}
 
 	}()
 
@@ -247,11 +254,16 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 		if err == io.EOF {
 			break
 		}
+
 		if err != nil {
+			pw.CloseWithError(err)
 			return err
 		}
 
-		pw.Write(req.ChunkData)
+		if _, err := pw.Write(req.ChunkData); err != nil {
+			pw.CloseWithError(err)
+			return err
+		}
 
 		if req.IsLastChunk {
 			break
@@ -259,5 +271,31 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 	}
 
 	pw.Close()
+
+	if err := <-errorChn; err != nil {
+		return stream.SendAndClose(&pb.UploadVideoFromThirdPartyResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("S3 upload failed: %v", err),
+		})
+	}
+
+	region := os.Getenv("AWS_REGION")
+
+	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", s.S3Bucket, region, key)
+
+	id, err := s.SaveToDB(userID, key, originalFilename, req.MimeType, req.FileSize, url)
+
+	fmt.Println(err)
+	if err != nil {
+		return stream.SendAndClose(&pb.UploadVideoFromThirdPartyResponse{
+			Success:      false,
+			ErrorMessage: "Internal server error",
+		})
+	}
+
+	return stream.SendAndClose(&pb.UploadVideoFromThirdPartyResponse{
+		Success:  true,
+		VideoUrl: fmt.Sprintf("http://localhost:8080/api/video/watch/%s", id.String()),
+	})
 
 }

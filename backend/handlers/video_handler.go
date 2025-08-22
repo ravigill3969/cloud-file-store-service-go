@@ -105,8 +105,6 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			fmt.Println(resp.VideoUrl)
-
 			resChan <- resp.VideoUrl
 		}(fh)
 	}
@@ -224,10 +222,80 @@ func (v *VideoHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Requ
 
 }
 
-
-func (v *VideoHandler) UploadVideoForThirdParty(){
+func (v *VideoHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.Request) {
 	// /api/video/upload/{publicKey}/secret/{secretKey}
-	
+
+	files := r.MultipartForm.File["video"]
+
+	fileHeader := files[0]
+
+	file, err := fileHeader.Open()
+
+	if err != nil {
+	}
+	defer file.Close()
+
+	stream, err := v.VideoClient.UploadVideoFromThirdParty(r.Context())
+
+	buf := make([]byte, 1024*1024*5)
+	firstChunk := true
+
+	for {
+		n, err := file.Read(buf)
+
+		if err != nil {
+		}
+
+		if n == 0 {
+			break
+		}
+
+		req := &pb.UploadVideoFromThirdPartyRequest{
+			ChunkData:   buf[:n],
+			IsLastChunk: false,
+		}
+
+		if firstChunk {
+			// req.UserId = userID
+			req.OriginalFilename = fileHeader.Filename
+			req.MimeType = fileHeader.Header.Get("Content-Type")
+			firstChunk = false
+			req.FileSize = int64(fileHeader.Size)
+		}
+
+		err = stream.Send(req)
+
+		if err != nil {
+		}
+
+	}
+
+	// last chunck
+	if err := stream.Send(&pb.UploadVideoFromThirdPartyRequest{
+		UserId:           "dweg",
+		OriginalFilename: fileHeader.Filename,
+		MimeType:         fileHeader.Header.Get("Content-Type"),
+		IsLastChunk:      true,
+	}); err != nil {
+		return
+	}
+
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]any{
+		"success": resp.VideoUrl,
+		"error":   resp.ErrorMessage,
+	}
+
+	if err = json.NewEncoder(w).Encode(response); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+	}
+
 }
 
-func (v *VideoHandler) DeleteVideoForThirdParty(){}
+func (v *VideoHandler) DeleteVideoForThirdParty() {}
