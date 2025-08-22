@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	pb "github.com/ravigill3969/cloud-file-store-service-video-goGrpc/video"
 	middleware "github.com/ravigill3969/cloud-file-store/backend/middlewares"
 	"github.com/ravigill3969/cloud-file-store/backend/utils"
@@ -17,6 +20,7 @@ import (
 type VideoHandler struct {
 	VideoClient pb.VideoServiceClient
 	RedisClient *redis.Client
+	DB          *sql.DB
 }
 
 func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
@@ -223,27 +227,56 @@ func (v *VideoHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Requ
 }
 
 func (v *VideoHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.Request) {
+
 	// /api/video/upload/{publicKey}/secret/{secretKey}
 
-	files := r.MultipartForm.File["video"]
+	parsedUrl := strings.Split(r.URL.Path, "/")
 
-	fileHeader := files[0]
+	publicKey := parsedUrl[4]
+	secretKey := parsedUrl[6]
 
-	file, err := fileHeader.Open()
+	var userID uuid.UUID
+
+	err := v.DB.QueryRow(`SELECT uuid FROM users WHERE public_key = $1 AND secret_key = $2`, &publicKey, &secretKey).Scan(&userID)
 
 	if err != nil {
+		utils.SendError(w, http.StatusUnauthorized, "Invalid keys")
+		return
+	}
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		utils.SendError(w, http.StatusBadRequest, "Could not parse multipart form: ")
+		return
+	}
+
+	files := r.MultipartForm.File["video"]
+	if len(files) == 0 {
+		utils.SendError(w, http.StatusBadRequest, "No video file provided")
+		return
+	}
+
+	fileHeader := files[0]
+	file, err := fileHeader.Open()
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Failed to open uploaded file: "+err.Error())
+		return
 	}
 	defer file.Close()
 
 	stream, err := v.VideoClient.UploadVideoFromThirdParty(r.Context())
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Failed to open gRPC stream: "+err.Error())
+		return
+	}
 
-	buf := make([]byte, 1024*1024*5)
+	buf := make([]byte, 1024)
 	firstChunk := true
 
 	for {
 		n, err := file.Read(buf)
-
-		if err != nil {
+		if err != nil && err != io.EOF {
+			utils.SendError(w, http.StatusInternalServerError, "Error reading file: "+err.Error())
+			return
 		}
 
 		if n == 0 {
@@ -256,46 +289,46 @@ func (v *VideoHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.R
 		}
 
 		if firstChunk {
-			// req.UserId = userID
 			req.OriginalFilename = fileHeader.Filename
 			req.MimeType = fileHeader.Header.Get("Content-Type")
-			firstChunk = false
 			req.FileSize = int64(fileHeader.Size)
+			firstChunk = false
+			req.UserId = userID.String()
+
 		}
 
-		err = stream.Send(req)
-
-		if err != nil {
+		if err := stream.Send(req); err != nil {
+			utils.SendError(w, http.StatusInternalServerError, "Failed to send chunk: "+err.Error())
+			return
 		}
-
 	}
 
-	// last chunck
-	if err := stream.Send(&pb.UploadVideoFromThirdPartyRequest{
-		UserId:           "dweg",
-		OriginalFilename: fileHeader.Filename,
-		MimeType:         fileHeader.Header.Get("Content-Type"),
-		IsLastChunk:      true,
-	}); err != nil {
+	lastReq := &pb.UploadVideoFromThirdPartyRequest{
+
+		IsLastChunk: true,
+	}
+
+	if err := stream.Send(lastReq); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Failed to send last chunk: "+err.Error())
 		return
 	}
 
 	resp, err := stream.CloseAndRecv()
 	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Failed to receive response: "+err.Error())
 		return
 	}
 
-	w.Header().Set("Content-type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	response := map[string]any{
 		"success": resp.VideoUrl,
 		"error":   resp.ErrorMessage,
 	}
 
-	if err = json.NewEncoder(w).Encode(response); err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Failed to encode response: "+err.Error())
 	}
-
 }
 
 func (v *VideoHandler) DeleteVideoForThirdParty() {}

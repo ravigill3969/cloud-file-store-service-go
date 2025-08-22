@@ -212,6 +212,7 @@ func (s *Server) DeleteVideo(ctx context.Context, req *pb.DeleteVideoRequest) (*
 }
 
 func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFromThirdPartyServer) error {
+	fmt.Println("hit grpc")
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -237,6 +238,8 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 
 		if err != nil {
 			errorChn <- err
+		} else {
+			errorChn <- nil
 		}
 
 	}()
@@ -295,7 +298,7 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 
 	return stream.SendAndClose(&pb.UploadVideoFromThirdPartyResponse{
 		Success:  true,
-		VideoUrl: fmt.Sprintf("http://localhost:8080/api/video/watch/%s", id.String()),
+		VideoUrl: fmt.Sprintf("http://localhost:8080/api/video/watch/?vid=%s", id.String()),
 	})
 
 }

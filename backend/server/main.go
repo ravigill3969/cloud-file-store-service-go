@@ -130,6 +130,7 @@ func main() {
 	videoHandler := handlers.VideoHandler{
 		VideoClient: videoClient,
 		RedisClient: redisClient,
+		DB: db,
 	}
 
 	mux.HandleFunc("/webhook", stripeHandler.HandleWebhook)
