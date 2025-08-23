@@ -302,3 +302,37 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 	})
 
 }
+
+func (s *Server) DeleteVideoFromThirdParty(ctx context.Context, req *pb.DeleteVideoFromThirdPartyRequest) (*pb.DeleteVideoFromThirdPartyResponse, error) {
+
+	vid := req.Vid
+	userID := req.UserId
+
+	res, err := s.DB.Exec(`DELETE FROM videos WHERE id = $1 AND user_id = $2`, vid, userID)
+	if err != nil {
+		return &pb.DeleteVideoFromThirdPartyResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to delete video: %v", err),
+		}, nil
+	}
+
+	count, err := res.RowsAffected()
+	if err != nil {
+		return &pb.DeleteVideoFromThirdPartyResponse{
+			Success: false,
+			Message: fmt.Sprintf("failed to get affected rows: %v", err),
+		}, nil
+	}
+
+	if count == 0 {
+		return &pb.DeleteVideoFromThirdPartyResponse{
+			Success: false,
+			Message: "no video found with this ID for the user",
+		}, nil
+	}
+
+	return &pb.DeleteVideoFromThirdPartyResponse{
+		Success: true,
+		Message: "video deleted successfully",
+	}, nil
+}

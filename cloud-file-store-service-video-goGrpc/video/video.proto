@@ -11,7 +11,19 @@ service VideoService {
   rpc GetVideo(GetVideoRequest) returns (stream GetVideoResponse);
   rpc DeleteVideo(DeleteVideoRequest) returns (DeleteVideoResponse);
   rpc UploadVideoFromThirdParty(stream UploadVideoFromThirdPartyRequest) returns (UploadVideoFromThirdPartyResponse);
+  rpc DeleteVideoFromThirdParty(DeleteVideoFromThirdPartyRequest) returns (DeleteVideoFromThirdPartyResponse);
 }
+
+message DeleteVideoFromThirdPartyRequest{
+  string vid =1;
+  string userId = 2;
+}
+
+message DeleteVideoFromThirdPartyResponse{
+  bool success = 1;
+  string message = 2;
+}
+
 
 // Upload video from third site
 message UploadVideoFromThirdPartyRequest{

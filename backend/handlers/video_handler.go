@@ -331,4 +331,36 @@ func (v *VideoHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.R
 	}
 }
 
-func (v *VideoHandler) DeleteVideoForThirdParty() {}
+func (v *VideoHandler) DeleteVideoForThirdParty(w http.ResponseWriter, r *http.Request) {
+	parsedUrl := strings.Split(r.URL.Path, "/")
+
+	publicKey := parsedUrl[4]
+	secretKey := parsedUrl[6]
+	vid := parsedUrl[7]
+
+	var userID uuid.UUID
+
+	err := v.DB.QueryRow(`SELECT uuid FROM users WHERE public_key = $1 AND secret_key = $2`, &publicKey, &secretKey).Scan(&userID)
+
+	if err != nil {
+		utils.SendError(w, http.StatusUnauthorized, "Invalid keys")
+		return
+	}
+
+	resp, err := v.VideoClient.DeleteVideoFromThirdParty(r.Context(), &pb.DeleteVideoFromThirdPartyRequest{
+		Vid:    vid,
+		UserId: userID.String(),
+	})
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if !resp.Success {
+		utils.SendError(w, http.StatusInternalServerError, resp.Message)
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK, resp.Message)
+}
