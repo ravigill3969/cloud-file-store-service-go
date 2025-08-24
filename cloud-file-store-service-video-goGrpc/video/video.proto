@@ -1,17 +1,37 @@
 syntax = "proto3";
 
 package video;
+import "google/protobuf/timestamp.proto";
 
 option go_package = ".;video";
+
 
 // Video upload service
 service VideoService {
   // Client streams chunks of the video to the server
+  rpc GetAllVideosWithUserID(GetAllVideosWithUserIDRequest) returns (GetAllVideosWithUserIDResponse);
   rpc UploadVideo(stream UploadVideoRequest) returns (UploadVideoResponse);
   rpc GetVideo(GetVideoRequest) returns (stream GetVideoResponse);
   rpc DeleteVideo(DeleteVideoRequest) returns (DeleteVideoResponse);
   rpc UploadVideoFromThirdParty(stream UploadVideoFromThirdPartyRequest) returns (UploadVideoFromThirdPartyResponse);
   rpc DeleteVideoFromThirdParty(DeleteVideoFromThirdPartyRequest) returns (DeleteVideoFromThirdPartyResponse);
+}
+
+message GetAllVideosWithUserIDRequest{
+  string user_id = 1;
+}
+
+message VideoMetadata {
+  string vid = 1;
+  string original_filename = 2;
+  string mime_type = 3;
+  int64 file_size_bytes = 4; // better as number
+  string url = 5;
+  google.protobuf.Timestamp upload_date = 6;
+}
+
+message GetAllVideosWithUserIDResponse {
+  repeated VideoMetadata videos = 1;
 }
 
 message DeleteVideoFromThirdPartyRequest{

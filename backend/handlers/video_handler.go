@@ -36,7 +36,7 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 	resChan := make(chan string, len(files))
 	errChn := make(chan error, len(files))
 
-	const chunkSize = 1024 * 1024 * 5 // 5MB
+	const chunkSize = 1024 // 1MB
 
 	var wg sync.WaitGroup
 
@@ -146,12 +146,11 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// this is both for ui and third party
 func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r *http.Request) {
 
 	vid := r.URL.Query().Get("vid")
 
-	fmt.Println(r.Header.Get("Range"))
+	fmt.Println(r)
 
 	if vid == "" {
 		utils.SendError(w, http.StatusBadRequest, "Invalid Id")
@@ -175,7 +174,7 @@ func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r
 
 	for {
 		resp, err := stream.Recv()
-		fmt.Println(err)
+
 		if err == io.EOF {
 			break
 		}
@@ -363,4 +362,24 @@ func (v *VideoHandler) DeleteVideoForThirdParty(w http.ResponseWriter, r *http.R
 	}
 
 	utils.SendJSON(w, http.StatusOK, resp.Message)
+}
+
+func (v *VideoHandler) GetAllVideosWithUserID(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if userID == " " {
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	resp, err := v.VideoClient.GetAllVideosWithUserID(r.Context(), &pb.GetAllVideosWithUserIDRequest{
+		UserId: userID,
+	})
+
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	utils.SendJSON(w, http.StatusOK, resp)
 }

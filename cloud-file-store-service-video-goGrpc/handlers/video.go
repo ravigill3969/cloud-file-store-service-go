@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	pb "github.com/grpc/video"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Server struct {
@@ -41,14 +42,17 @@ func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 	key := fmt.Sprintf("video/%s-%s-%s", userID, time.Now().Format("20060102-150405"), originalFilename)
 
 	go func() {
+		fmt.Println("uploading")
 		_, err := s.S3Uploader.Upload(context.Background(), &s3.PutObjectInput{
 			Bucket: &s.S3Bucket,
 			Key:    aws.String(key),
 			Body:   pr,
 		})
 		if err != nil {
-
+			fmt.Println(err)
 			uploadDone <- err
+		} else {
+			uploadDone <- nil
 		}
 	}()
 
@@ -181,27 +185,12 @@ func (s *Server) DeleteVideo(ctx context.Context, req *pb.DeleteVideoRequest) (*
 	vid := req.Vid
 	userID := req.UserID
 
-	// Delete the video from the database
-	res, err := s.DB.Exec(`DELETE FROM videos WHERE id = $1 AND user_id = $2`, vid, userID)
+	err := s.DeleteFromDB(vid, userID)
+
 	if err != nil {
 		return &pb.DeleteVideoResponse{
 			Success: false,
-			Message: fmt.Sprintf("failed to delete video: %v", err),
-		}, nil
-	}
-
-	count, err := res.RowsAffected()
-	if err != nil {
-		return &pb.DeleteVideoResponse{
-			Success: false,
-			Message: fmt.Sprintf("failed to get affected rows: %v", err),
-		}, nil
-	}
-
-	if count == 0 {
-		return &pb.DeleteVideoResponse{
-			Success: false,
-			Message: "no video found with this ID for the user",
+			Message: err.Error(),
 		}, nil
 	}
 
@@ -230,6 +219,7 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 	key := fmt.Sprintf("video/%s-%s-%s", userID, time.Now().Format("20060102-150405"), originalFilename)
 
 	go func() {
+
 		_, err := s.S3Uploader.Upload(context.Background(), &s3.PutObjectInput{
 			Bucket: &s.S3Bucket,
 			Key:    aws.String(key),
@@ -308,26 +298,12 @@ func (s *Server) DeleteVideoFromThirdParty(ctx context.Context, req *pb.DeleteVi
 	vid := req.Vid
 	userID := req.UserId
 
-	res, err := s.DB.Exec(`DELETE FROM videos WHERE id = $1 AND user_id = $2`, vid, userID)
+	err := s.DeleteFromDB(vid, userID)
+
 	if err != nil {
 		return &pb.DeleteVideoFromThirdPartyResponse{
 			Success: false,
-			Message: fmt.Sprintf("failed to delete video: %v", err),
-		}, nil
-	}
-
-	count, err := res.RowsAffected()
-	if err != nil {
-		return &pb.DeleteVideoFromThirdPartyResponse{
-			Success: false,
-			Message: fmt.Sprintf("failed to get affected rows: %v", err),
-		}, nil
-	}
-
-	if count == 0 {
-		return &pb.DeleteVideoFromThirdPartyResponse{
-			Success: false,
-			Message: "no video found with this ID for the user",
+			Message: err.Error(),
 		}, nil
 	}
 
@@ -336,3 +312,66 @@ func (s *Server) DeleteVideoFromThirdParty(ctx context.Context, req *pb.DeleteVi
 		Message: "video deleted successfully",
 	}, nil
 }
+
+func (s *Server) DeleteFromDB(vid string, userID string) error {
+	res, err := s.DB.Exec(`DELETE FROM videos WHERE id = $1 AND user_id = $2`, vid, userID)
+
+	if err != nil {
+		return fmt.Errorf("failed to delete video: %v", err)
+	}
+
+	count, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get affected rows: %v", err)
+	}
+
+	if count == 0 {
+		return fmt.Errorf("no video found with this ID for the user")
+	}
+
+	return nil
+}
+
+func (s *Server) GetAllVideosWithUserID(ctx context.Context, req *pb.GetAllVideosWithUserIDRequest) (*pb.GetAllVideosWithUserIDResponse, error) {
+    userId := req.UserId
+
+    rows, err := s.DB.QueryContext(ctx, `
+        SELECT id, original_filename, mime_type, file_size_bytes, url, upload_date
+        FROM videos
+        WHERE user_id = $1
+    `, userId)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var videos []*pb.VideoMetadata
+
+    for rows.Next() {
+        var (
+            id, filename, mimeType, url string
+            fileSize int64
+            uploadDate time.Time
+        )
+
+        if err := rows.Scan(&id, &filename, &mimeType, &fileSize, &url, &uploadDate); err != nil {
+            return nil, err
+        }
+
+        videos = append(videos, &pb.VideoMetadata{
+            Vid:              id,
+            OriginalFilename: filename,
+            MimeType:         mimeType,
+            FileSizeBytes:    fileSize,
+            Url:              url,
+            UploadDate:       timestamppb.New(uploadDate),
+        })
+    }
+
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+
+    return &pb.GetAllVideosWithUserIDResponse{Videos: videos}, nil
+}
+
