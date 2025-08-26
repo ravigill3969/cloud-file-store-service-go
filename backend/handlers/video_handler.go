@@ -150,8 +150,6 @@ func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r
 
 	vid := r.URL.Query().Get("vid")
 
-	fmt.Println(r)
-
 	if vid == "" {
 		utils.SendError(w, http.StatusBadRequest, "Invalid Id")
 		return
@@ -195,33 +193,21 @@ func (v *VideoHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Requ
 	vid := r.URL.Query().Get("vid")
 	userId := r.Context().Value(middleware.UserIDContextKey).(string)
 
+	fmt.Println(vid, userId)
+
 	resp, err := v.VideoClient.DeleteVideo(r.Context(), &pb.DeleteVideoRequest{
 		UserID: userId,
 		Vid:    vid,
 	})
+
+	fmt.Println(resp)
 
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Intenal server error")
 		return
 	}
 
-	if resp.Success {
-		w.WriteHeader(http.StatusOK)
-	} else {
-		w.WriteHeader(http.StatusInternalServerError)
-
-	}
-
-	w.Header().Set("Content-type", "application/json")
-
-	response := map[string]any{
-		"Status":  resp.Success,
-		"message": resp.Message,
-	}
-
-	if err = json.NewEncoder(w).Encode(response); err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Unable to encode to json")
-	}
+	utils.SendJSON(w, http.StatusOK, resp.Message)
 
 }
 
@@ -381,5 +367,15 @@ func (v *VideoHandler) GetAllVideosWithUserID(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, resp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	response := map[string]any{
+		"status": "success",
+		"data":   resp.Videos,
+	}
+
+	if err = json.NewEncoder(w).Encode(response); err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Unable to encode to json")
+	}
 }
