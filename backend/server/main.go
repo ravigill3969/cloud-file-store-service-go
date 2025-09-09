@@ -26,8 +26,6 @@ import (
 	pb "github.com/ravigill3969/cloud-file-store-service-video-goGrpc/video"
 )
 
-
-
 func main() {
 	err := godotenv.Load(".env")
 	if err != nil {
@@ -130,7 +128,7 @@ func main() {
 	videoHandler := handlers.VideoHandler{
 		VideoClient: videoClient,
 		RedisClient: redisClient,
-		DB: db,
+		DB:          db,
 	}
 
 	mux.HandleFunc("/webhook", stripeHandler.HandleWebhook)
