@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"time"
 
@@ -36,13 +37,22 @@ func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 	if err != nil {
 		return err
 	}
+	err = validateVideoContentType(req.MimeType)
+
+	if err != nil {
+		return stream.SendAndClose(&pb.UploadVideoResponse{
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("%s is not supported! please report to c@c.com", req.MimeType),
+		})
+	}
+
 	userID := req.UserId
 	originalFilename := req.OriginalFilename
 
 	key := fmt.Sprintf("video/%s-%s-%s", userID, time.Now().Format("20060102-150405"), originalFilename)
 
 	go func() {
-		fmt.Println("uploading")
+
 		_, err := s.S3Uploader.Upload(context.Background(), &s3.PutObjectInput{
 			Bucket: &s.S3Bucket,
 			Key:    aws.String(key),
@@ -95,7 +105,6 @@ func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 
 	id, err := s.SaveToDB(userID, key, originalFilename, req.MimeType, req.FileSize, url)
 
-	fmt.Println(err)
 	if err != nil {
 		return stream.SendAndClose(&pb.UploadVideoResponse{
 			Success:      false,
@@ -105,7 +114,7 @@ func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
 
 	return stream.SendAndClose(&pb.UploadVideoResponse{
 		Success:  true,
-		VideoUrl: fmt.Sprintf("http://localhost:8080/api/video/watch/%s", id.String()),
+		VideoUrl: fmt.Sprintf("http://localhost:8080/api/video/watch?vid=%s", id.String()),
 	})
 }
 
@@ -201,7 +210,7 @@ func (s *Server) DeleteVideo(ctx context.Context, req *pb.DeleteVideoRequest) (*
 }
 
 func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFromThirdPartyServer) error {
-	fmt.Println("hit grpc")
+
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -278,7 +287,6 @@ func (s *Server) UploadVideoFromThirdParty(stream pb.VideoService_UploadVideoFro
 
 	id, err := s.SaveToDB(userID, key, originalFilename, req.MimeType, req.FileSize, url)
 
-	fmt.Println(err)
 	if err != nil {
 		return stream.SendAndClose(&pb.UploadVideoFromThirdPartyResponse{
 			Success:      false,
@@ -314,64 +322,104 @@ func (s *Server) DeleteVideoFromThirdParty(ctx context.Context, req *pb.DeleteVi
 }
 
 func (s *Server) DeleteFromDB(vid string, userID string) error {
-	res, err := s.DB.Exec(`DELETE FROM videos WHERE id = $1 AND user_id = $2`, vid, userID)
+	var key string
 
+	err := s.DB.QueryRow(
+		`DELETE FROM videos WHERE id = $1 AND user_id = $2 RETURNING s3_key`,
+		vid, userID,
+	).Scan(&key)
 	if err != nil {
 		return fmt.Errorf("failed to delete video: %v", err)
 	}
 
-	count, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get affected rows: %v", err)
+	bucket := os.Getenv("AWS_BUCKET_NAME")
+	if bucket == "" {
+		log.Println("AWS_BUCKET_NAME environment variable is not set")
+		return fmt.Errorf("bucket name is required")
 	}
 
-	if count == 0 {
-		return fmt.Errorf("no video found with this ID for the user")
+	_, err = s.S3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		return fmt.Errorf("Unable to delete video from Cloud")
 	}
 
 	return nil
 }
 
 func (s *Server) GetAllVideosWithUserID(ctx context.Context, req *pb.GetAllVideosWithUserIDRequest) (*pb.GetAllVideosWithUserIDResponse, error) {
-    userId := req.UserId
+	userId := req.UserId
 
-    rows, err := s.DB.QueryContext(ctx, `
+	rows, err := s.DB.QueryContext(ctx, `
         SELECT id, original_filename, mime_type, file_size_bytes, url, upload_date
         FROM videos
         WHERE user_id = $1
     `, userId)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    var videos []*pb.VideoMetadata
+	var videos []*pb.VideoMetadata
 
-    for rows.Next() {
-        var (
-            id, filename, mimeType, url string
-            fileSize int64
-            uploadDate time.Time
-        )
+	for rows.Next() {
+		var (
+			id, filename, mimeType, url string
+			fileSize                    int64
+			uploadDate                  time.Time
+		)
 
-        if err := rows.Scan(&id, &filename, &mimeType, &fileSize, &url, &uploadDate); err != nil {
-            return nil, err
-        }
+		if err := rows.Scan(&id, &filename, &mimeType, &fileSize, &url, &uploadDate); err != nil {
+			return nil, err
+		}
 
-        videos = append(videos, &pb.VideoMetadata{
-            Vid:              id,
-            OriginalFilename: filename,
-            MimeType:         mimeType,
-            FileSizeBytes:    fileSize,
-            Url:              url,
-            UploadDate:       timestamppb.New(uploadDate),
-        })
-    }
+		videos = append(videos, &pb.VideoMetadata{
+			Vid:              id,
+			OriginalFilename: filename,
+			MimeType:         mimeType,
+			FileSizeBytes:    fileSize,
+			Url:              url,
+			UploadDate:       timestamppb.New(uploadDate),
+		})
+	}
 
-    if err := rows.Err(); err != nil {
-        return nil, err
-    }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-    return &pb.GetAllVideosWithUserIDResponse{Videos: videos}, nil
+	return &pb.GetAllVideosWithUserIDResponse{Videos: videos}, nil
 }
 
+func validateVideoContentType(contentType string) error {
+	allowedTypes := []string{
+		// Common web formats
+		"video/mp4",  // .mp4 (H.264/AAC) – most widely supported
+		"video/webm", // .webm (VP8/VP9/Opus) – modern web
+		"video/ogg",  // .ogv (Theora/Vorbis)
+
+		// Apple / QuickTime
+		"video/quicktime", // .mov
+
+		// Legacy / platform-specific
+		"video/x-msvideo",              // .avi
+		"video/x-ms-wmv",               // .wmv
+		"video/mpeg",                   // .mpg, .mpeg
+		"video/3gpp",                   // .3gp (mobile)
+		"video/3gpp2",                  // .3g2 (mobile)
+		"video/x-flv",                  // .flv (Flash Video)
+		"application/vnd.rn-realmedia", // .rm, .rmvb
+
+		// Matroska
+		"video/x-matroska", // .mkv
+	}
+
+	for _, t := range allowedTypes {
+		if contentType == t {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported video format: %s", contentType)
+}
