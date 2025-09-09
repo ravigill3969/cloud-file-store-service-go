@@ -62,27 +62,27 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	err := r.ParseMultipartForm(10 << 20)
 
 	if err != nil {
-		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Could not parse multipart form")
 		return
 	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "File not provided", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "File not provided")
 		return
 	}
 
 	const maxSizeBytes = 5 * 1024 * 1024
 
 	if fileHeader.Size > maxSizeBytes {
-		http.Error(w, "Image size exceeds 5MB limit", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Image size exceeds 5MB limit")
 		return
 	}
 
 	defer file.Close()
 
 	if fileHeader.Filename == "" {
-		http.Error(w, "Filename missing in upload", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Filename is required")
 		return
 	}
 
@@ -91,7 +91,8 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	parsedURL := strings.Split(path, "/")
 
 	if len(parsedURL) != 6 && parsedURL[1] != "api" && parsedURL[4] != "secure" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Invalid path")
+
 		return
 	}
 
@@ -134,11 +135,11 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	fmt.Println(err)
 
 	if user.SecretKey != "" && secretKey != user.SecretKey {
-		http.Error(w, "Invalid public or secret key", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Invalid public or secret key")
 		return
 	}
 	if err != nil {
-		http.Error(w, "Post req limit reached for this month", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Post req limit reached for this month")
 		return
 	}
 
@@ -146,7 +147,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Error reading file")
 		return
 	}
 
@@ -155,20 +156,21 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	err = validateContentType(contentType)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnsupportedMediaType)
+		utils.SendError(w, http.StatusUnsupportedMediaType, "Unsupported media")
 		return
 	}
 
 	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, contentType, key)
 
 	if err != nil {
-		http.Error(w, "Failed to generate presigned URL: "+err.Error(), http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	reqHttp, err := http.NewRequest("PUT", *presignedURL, bytes.NewReader(fileBytes))
 	if err != nil {
-		http.Error(w, "Failed to create PUT request: "+err.Error(), http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+
 		return
 	}
 
@@ -178,7 +180,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	client := &http.Client{}
 	resp, err := client.Do(reqHttp)
 	if err != nil {
-		http.Error(w, "Failed to upload file to S3", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 	defer resp.Body.Close()
@@ -186,7 +188,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		fmt.Println("S3 Response error:", resp.Status, string(bodyBytes))
-		http.Error(w, "Failed to upload file to S3", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
@@ -213,7 +215,33 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 }
 
 func validateContentType(contentType string) error {
-	allowedTypes := []string{"image/jpeg", "image/png", "image/gif"}
+	allowedTypes := []string{
+		// Common web formats
+		"image/jpeg",
+		"image/png",
+		"image/gif",
+		"image/webp",
+
+		// Vector formats
+		"image/svg+xml",
+
+		// Legacy / less common but still used
+		"image/bmp",
+		"image/x-ms-bmp", // sometimes BMP is reported this way
+		"image/tiff",
+
+		// Apple / mobile formats
+		"image/heic",
+		"image/heif",
+
+		// Icon formats
+		"image/x-icon",             // .ico files
+		"image/vnd.microsoft.icon", // alternate .ico MIME type
+
+		// Photoshop & professional formats
+		"image/vnd.adobe.photoshop", // .psd
+		"image/x-photoshop",         // older MIME type
+	}
 
 	for _, t := range allowedTypes {
 		if contentType == t {

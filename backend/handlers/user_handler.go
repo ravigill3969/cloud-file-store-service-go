@@ -336,7 +336,6 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 	refreshToken, err := utils.CreateToken(userID, 24*time.Hour*30, []byte(refreshJWTKey))
 	if err != nil {
 		utils.SendError(w, http.StatusUnauthorized, "Internal Server Error")
-
 		return
 	}
 
@@ -384,7 +383,8 @@ func (h *UserHandler) UpdateSecretKey(w http.ResponseWriter, r *http.Request) {
 			utils.SendError(w, http.StatusNotFound, "Unauthorized")
 		} else {
 			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
-			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error: Failed to retrieve user data")
+
 		}
 		return
 	}
@@ -476,4 +476,35 @@ func updateUserPasswordLogic(db *sql.DB, r *http.Request) error {
 	}
 
 	return nil
+}
+
+
+func (h *UserHandler) UpdateUserInfo(w http.ResponseWriter, r *http.Request) {
+	var user models.UpdateUser
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		utils.SendError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if user.Email == "" || user.Username == "" {
+		utils.SendError(w, http.StatusBadRequest, "Email and username are required")
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok {
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	_, err := h.DB.Exec(
+		`UPDATE users SET email = $1, username = $2 WHERE uuid = $3`,
+		user.Email, user.Username, userID,
+	)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Unable to update user info")
+		return
+	}
+
+	utils.SendString(w, http.StatusOK, "User info updated successfully")
 }

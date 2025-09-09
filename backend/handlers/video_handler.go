@@ -103,13 +103,13 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Receive response
-			resp, err := stream.CloseAndRecv()
+			_, err = stream.CloseAndRecv()
 			if err != nil {
 				errChn <- fmt.Errorf("error closing stream for %s: %w", fh.Filename, err)
 				return
 			}
 
-			resChan <- resp.VideoUrl
+			resChan <- fh.Filename
 		}(fh)
 	}
 
@@ -200,20 +200,21 @@ func (v *VideoHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Requ
 		Vid:    vid,
 	})
 
-	fmt.Println(resp)
-
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Intenal server error")
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, resp.Message)
+	if !resp.Success {
+		utils.SendError(w, http.StatusInternalServerError, resp.Message)
+		return
+	}
+
+	utils.SendString(w, http.StatusOK, resp.Message)
 
 }
 
 func (v *VideoHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.Request) {
-
-	// /api/video/upload/{publicKey}/secret/{secretKey}
 
 	parsedUrl := strings.Split(r.URL.Path, "/")
 

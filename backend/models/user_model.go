@@ -7,12 +7,12 @@ import (
 )
 
 type User struct {
-	UUID           uuid.UUID `db:"uuid" json:"uuid"`
-	Username       string    `db:"username" json:"username"`
-	Email          string    `db:"email" json:"email"`
-	PasswordHash   string    `db:"password_hash" json:"password"`
-	PublicKey      string    `db:"public_key" json:"public_key"`
-	SecretKey      string    `db:"secret_key" json:"-"`  // savved as enum in db 1)free  2) standard 3) pro
+	UUID         uuid.UUID `db:"uuid" json:"uuid"`
+	Username     string    `db:"username" json:"username"`
+	Email        string    `db:"email" json:"email"`
+	PasswordHash string    `db:"password_hash" json:"password"`
+	PublicKey    string    `db:"public_key" json:"public_key"`
+	SecretKey    string    `db:"secret_key" json:"-"` // savved as enum in db 1)free  2) standard 3) pro
 
 	AccountType    string    `db:"account_type" json:"account_type"`
 	MaxAPICalls    int       `db:"max_api_calls" json:"max_api_calls"`
@@ -71,4 +71,9 @@ type UserForSecretKey struct {
 	Email        string `json:"email"`
 	PasswordHash string `db:"password_hash" json:"password_hash"`
 	SecretKey    string `db:"secret_key" json:"secret_key"`
+}
+
+type UpdateUser struct {
+	Email    string `json:"email"`
+	Username string `json:"username"`
 }
