@@ -76,6 +76,7 @@ func main() {
 
 	accessKey := os.Getenv("AWS_S3_BUCKET_ACCESS_KEY")
 	secretKey := os.Getenv("AWS_S3_BUCKET_SECRET_ACCESS_KEY")
+	domainAWSCloudfront := os.Getenv("AWS_CLOUDFRONT_DOMAIN")
 
 	if accessKey == "" || secretKey == "" {
 		log.Fatal("AWS credentials are required")
@@ -96,11 +97,12 @@ func main() {
 		RedisClient: redisClient,
 	}
 	fileHandler := &handlers.FileHandler{
-		DB:         db,
-		S3Uploader: s3Uploader,
-		S3Client:   s3Client,
-		S3Bucket:   bucket,
-		Redis:      redisClient,
+		DB:                  db,
+		S3Uploader:          s3Uploader,
+		S3Client:            s3Client,
+		S3Bucket:            bucket,
+		Redis:               redisClient,
+		AWSCloudFrontDomain: domainAWSCloudfront,
 	}
 	stripeHandler := &handlers.Stripe{
 		Db: db,
