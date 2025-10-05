@@ -62,12 +62,15 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	domainAWSCloudfront := os.Getenv("AWS_CLOUDFRONT_DOMAIN")
+
 	server := &handlers.Server{
-		DB:         db,
-		S3Uploader: s3Uploader,
-		S3Client:   s3Client,
-		S3Bucket:   bucket,
-		Redis:      redisClient,
+		DB:                  db,
+		S3Uploader:          s3Uploader,
+		S3Client:            s3Client,
+		S3Bucket:            bucket,
+		Redis:               redisClient,
+		AWSCloudFrontDomain: domainAWSCloudfront,
 	}
 
 	s := grpc.NewServer()
