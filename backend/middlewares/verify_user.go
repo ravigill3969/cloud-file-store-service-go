@@ -31,7 +31,7 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			log.Printf("Auth failed: Error reading cookie: %v", err)
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			utils.SendError(w, http.StatusBadRequest, "Bad Request")
 			return
 		}
 
@@ -40,11 +40,11 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			if err == http.ErrNoCookie {
 				log.Println("Auth failed: No 'refresh_token' cookie found.")
-				http.Error(w, "Unauthorized: Authentication token required", http.StatusUnauthorized)
+				utils.SendError2(w, "Unauthorized: Authentication token required", http.StatusUnauthorized)
 				return
 			}
 			log.Printf("Auth failed: Error reading cookie: %v", err)
-			http.Error(w, "Bad Request", http.StatusBadRequest)
+			utils.SendError(w, http.StatusBadRequest, "Bad Request")
 			return
 		}
 
@@ -57,7 +57,7 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		claims, err := utils.ParseToken(tokenString, []byte(jwtKey))
 		if err != nil {
 			log.Printf("Auth failed: Invalid or expired token: %v", err)
-			http.Error(w, "Unauthorized: Invalid or expired token", http.StatusUnauthorized)
+			utils.SendError2(w, "Unauthorized: Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
 
@@ -70,12 +70,12 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		refreshTokenFromRedis, err := redis.RedisClient.Get(redisOpCtx, key).Result()
 
 		if err != nil {
-			http.Error(w, "Something went incredibly wrong!", http.StatusInternalServerError)
+			utils.SendError2(w, "Something went incredibly wrong!", http.StatusInternalServerError)
 			return
 		}
 
 		if refreshTokenFromRedis != rTokenString {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			utils.SendError2(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 

@@ -36,11 +36,12 @@ const (
 )
 
 type FileHandler struct {
-	DB         *sql.DB
-	S3Uploader s3manageriface.UploaderAPI
-	S3Client   s3iface.S3API
-	S3Bucket   string
-	Redis      *redis.Client
+	DB                  *sql.DB
+	S3Uploader          s3manageriface.UploaderAPI
+	S3Client            s3iface.S3API
+	S3Bucket            string
+	Redis               *redis.Client
+	AWSCloudFrontDomain string
 }
 
 func (fh *FileHandler) CreatePresignedUploadRequest(fileName, contentType string, key string) (*string, error) {
@@ -125,12 +126,6 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		&user.Email,
 		&user.PostAPICalls,
 	)
-	// 	ID           uuid.UUID `json:"id"`
-	// PublicKey    string    `json:"public_key"`
-	// SecretKey    string    `json:"secret_key"`
-	// Username     string    `json:"username"`
-	// Email        string    `json:"email"`
-	// PostAPICalls int16     `json:"post_api_calls"`
 
 	fmt.Println(err)
 
@@ -193,20 +188,18 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	}
 
 	fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
+	imageURL := fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
 
-	query := `INSERT INTO images (user_id , s3_key, original_filename, mime_type, file_size_bytes, url ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING url, original_filename, id`
+	query := `INSERT INTO images (user_id , s3_key, original_filename, mime_type, file_size_bytes, url, cdn_url ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING url, original_filename, id`
 
 	var fileUpload models.UploadFile
 
-	err = fh.DB.QueryRow(query, user.ID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL).Scan(&fileUpload.URL, &fileUpload.OriginalFilename, &fileUpload.Id)
+	err = fh.DB.QueryRow(query, user.ID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL).Scan(&fileUpload.URL, &fileUpload.OriginalFilename, &fileUpload.Id, &imageURL)
 
 	if err != nil {
-		http.Error(w, "Unable to save data", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Unable to save data")
 		return
 	}
-
-	url := os.Getenv("BACKEND_URL")
-	imageURL := fmt.Sprintf("%s/api/file/get-file/%s", url, fileUpload.Id)
 
 	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
 		"url": imageURL,
@@ -255,7 +248,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 7 {
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		utils.SendError2(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
 	imageID := parsedURL[4]
@@ -270,7 +263,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 	heightInt, errH := strconv.Atoi(heightStr)
 
 	if err != nil || errH != nil {
-		http.Error(w, "Width and height are required and must be integers", http.StatusBadRequest)
+		utils.SendError2(w, "Width and height are required and must be integers", http.StatusBadRequest)
 		return
 	}
 
@@ -306,9 +299,9 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			utils.SendError2(w, "Image not found", http.StatusNotFound)
 		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -323,14 +316,14 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	str, key, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 	if err != nil {
-		http.Error(w, "Image resize failed", http.StatusInternalServerError)
+		utils.SendError2(w, "Image resize failed", http.StatusInternalServerError)
 		return
 	}
 
 	tx, err := fh.DB.Begin()
 	if err != nil {
 		log.Println("Failed to start transaction:", err)
-		http.Error(w, "Server error", http.StatusInternalServerError)
+		utils.SendError2(w, "Server error", http.StatusInternalServerError)
 		return
 	}
 	defer func() {
@@ -362,7 +355,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	if err != nil {
 		log.Println("Image insert failed:", err)
-		http.Error(w, "Failed to insert image", http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to insert image", http.StatusInternalServerError)
 		return
 	}
 
@@ -379,18 +372,18 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 `, image.UserID, secretKey, publicKey)
 	if err != nil {
 		log.Println("Failed to decrement edit_api_calls:", err)
-		http.Error(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
 		return
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
 		log.Println("Error checking quota update:", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	if rowsAffected == 0 {
-		http.Error(w, "Insufficient quota", http.StatusForbidden)
+		utils.SendError2(w, "Insufficient quota", http.StatusForbidden)
 		return
 	}
 
@@ -461,7 +454,7 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := fh.DB.Query(`SELECT id, original_filename,mime_type,upload_date,width, height FROM images WHERE user_id = $1 AND deleted = FALSE`, userId)
+	rows, err := fh.DB.Query(`SELECT id, original_filename, mime_type, upload_date, width, height, cdn_url FROM images WHERE user_id = $1 AND deleted = FALSE`, userId)
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Query failed!")
 		return
@@ -479,11 +472,15 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 			&image.UploadDate,
 			&image.Width,
 			&image.Height,
+			&image.CDNUrl,
 		)
 		if err != nil {
+			fmt.Println(err)
 			utils.SendError(w, http.StatusInternalServerError, "Scan failed!")
 			return
 		}
+
+		fmt.Println(image)
 		img = append(img, image)
 	}
 
@@ -502,7 +499,7 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Failed to encode response: %v", err)
-		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to send response", http.StatusInternalServerError)
 	}
 
 }
@@ -511,14 +508,16 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
 		fmt.Println("ParseMultipartForm error:", err)
-		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "Could not parse multipart form")
+
 		return
 	}
 
 	files := r.MultipartForm.File["file"]
 
 	if len(files) == 0 {
-		http.Error(w, "No files uploaded", http.StatusBadRequest)
+		utils.SendError(w, http.StatusBadRequest, "No files uploaded")
+
 		return
 	}
 
@@ -526,7 +525,7 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 
 	if !ok {
 		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
 		return
 	}
 
@@ -545,10 +544,11 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("User not found for ID: %s", userID)
-			http.Error(w, "User not found", http.StatusNotFound)
+			utils.SendError(w, http.StatusNotFound, "User not found")
 		} else {
 			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
-			http.Error(w, "Internal server error: Failed to retrieve user data", http.StatusInternalServerError)
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error: Failed to retrieve user data")
+
 		}
 		return
 	}
@@ -615,7 +615,7 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 				return
 			}
 
-			key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + userID + "_" + f.Filename
+			key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + "_" + f.Filename
 
 			url, err := fh.CreatePresignedUploadRequest(f.Filename, f.Header.Get("Content-Type"), key)
 
@@ -658,7 +658,8 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 			}
 
 			fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
-			success <- models.UploadGoRoutines{Url: fileURL, OriginalFilename: f.Filename, MimeType: f.Header.Get("Content-Type"), Width: 0, Height: 0, S3Key: key, FileSize: f.Size}
+			cdnUrl := fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
+			success <- models.UploadGoRoutines{Url: fileURL, OriginalFilename: f.Filename, MimeType: f.Header.Get("Content-Type"), Width: 0, Height: 0, S3Key: key, FileSize: f.Size, CDNurl: cdnUrl}
 
 		}(fileHeader)
 
@@ -671,7 +672,7 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 
 	var uploadedFiles []string
 	for imgSuccess := range success {
-		uploadedFiles = append(uploadedFiles, imgSuccess.OriginalFilename)
+		uploadedFiles = append(uploadedFiles, imgSuccess.CDNurl)
 		uploaded = append(uploaded, models.UploadGoRoutines{
 			Url:              imgSuccess.Url,
 			OriginalFilename: imgSuccess.OriginalFilename,
@@ -680,6 +681,7 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 			Height:           imgSuccess.Height,
 			S3Key:            imgSuccess.S3Key,
 			FileSize:         imgSuccess.FileSize,
+			CDNurl:           imgSuccess.CDNurl,
 		})
 	}
 
@@ -728,8 +730,8 @@ func (fh *FileHandler) SaveUploadedImages(images []models.UploadGoRoutines, user
 	}()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO images (user_id, url, original_filename, mime_type, width, height, s3_key,file_size_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO images (user_id, url, original_filename, mime_type, width, height, s3_key,file_size_bytes, cdn_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`)
 	if err != nil {
 		return err
@@ -737,7 +739,7 @@ func (fh *FileHandler) SaveUploadedImages(images []models.UploadGoRoutines, user
 	defer stmt.Close()
 
 	for _, img := range images {
-		_, err = stmt.Exec(userID, img.Url, img.OriginalFilename, img.MimeType, img.Width, img.Height, img.S3Key, img.FileSize)
+		_, err = stmt.Exec(userID, img.Url, img.OriginalFilename, img.MimeType, img.Width, img.Height, img.S3Key, img.FileSize, img.CDNurl)
 		if err != nil {
 			return err
 		}
@@ -750,14 +752,14 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 4 {
-		http.Error(w, "Invalid URL structure", http.StatusBadRequest)
+		utils.SendError2(w, "Invalid URL structure", http.StatusBadRequest)
 		return
 	}
 
 	photoID := parsedURL[4]
 
 	if photoID == "" {
-		http.Error(w, "Invalid id", http.StatusBadRequest)
+		utils.SendError2(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 
@@ -771,9 +773,9 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Invalid image id", http.StatusBadRequest)
+			utils.SendError2(w, "Invalid image id", http.StatusBadRequest)
 		} else {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			utils.SendError2(w, "Image not found", http.StatusNotFound)
 
 		}
 
@@ -787,7 +789,7 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 	fmt.Println(resp.Header.Get("Content-Type"))
 
 	if err != nil || resp.StatusCode != http.StatusOK {
-		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
 		return
 	}
 
@@ -801,13 +803,13 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 func (fh *FileHandler) ServeFileWithIDForThirdParty(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
 	if len(parsedURL) < 5 {
-		http.Error(w, "Invalid URL structure", http.StatusBadRequest)
+		utils.SendError2(w, "Invalid URL structure", http.StatusBadRequest)
 		return
 	}
 
 	photoID := parsedURL[4]
 	if photoID == "" {
-		http.Error(w, "Invalid id", http.StatusBadRequest)
+		utils.SendError2(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 
@@ -861,10 +863,10 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 	err := row.Scan(&url)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			utils.SendError2(w, "Image not found", http.StatusNotFound)
 		} else {
 			log.Printf("Database error for image %s: %v", photoID, err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -876,14 +878,14 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 	resp, err := client.Get(url)
 	if err != nil {
 		log.Printf("Error fetching image from %s: %v", url, err)
-		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Non-200 status code %d when fetching %s", resp.StatusCode, url)
-		http.Error(w, "Failed to fetch image", http.StatusBadGateway)
+		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
 		return
 	}
 
@@ -967,7 +969,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		Key:    aws.String(s3key),
 	})
 	if err != nil {
-		http.Error(w, "Failed to get object from S3: "+err.Error(), http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to get object from S3: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer output.Body.Close()
@@ -979,7 +981,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, output.Body)
 	if err != nil {
-		http.Error(w, "Failed to stream file", http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to stream file", http.StatusInternalServerError)
 		return
 	}
 }
@@ -1228,7 +1230,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 4 {
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		utils.SendError2(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
 
@@ -1244,7 +1246,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 	heightInt, errH := strconv.Atoi(heightStr)
 
 	if err != nil || errH != nil {
-		http.Error(w, "Width and height are required and must be integers", http.StatusBadRequest)
+		utils.SendError2(w, "Width and height are required and must be integers", http.StatusBadRequest)
 		return
 	}
 
@@ -1281,9 +1283,9 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 	if err != nil {
 		fmt.Println(err)
 		if err == sql.ErrNoRows {
-			http.Error(w, "Image not found", http.StatusNotFound)
+			utils.SendError2(w, "Image not found", http.StatusNotFound)
 		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -1298,14 +1300,14 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 
 	str, key, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 	if err != nil {
-		http.Error(w, "Image resize failed", http.StatusInternalServerError)
+		utils.SendError2(w, "Image resize failed", http.StatusInternalServerError)
 		return
 	}
 
 	tx, err := fh.DB.Begin()
 	if err != nil {
 		log.Println("Failed to start transaction:", err)
-		http.Error(w, "Server error", http.StatusInternalServerError)
+		utils.SendError2(w, "Server error", http.StatusInternalServerError)
 		return
 	}
 	defer func() {
@@ -1337,7 +1339,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 
 	if err != nil {
 		log.Println("Image insert failed:", err)
-		http.Error(w, "Failed to insert image", http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to insert image", http.StatusInternalServerError)
 		return
 	}
 
@@ -1354,18 +1356,18 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 `, userID)
 	if err != nil {
 		log.Println("Failed to decrement edit_api_calls:", err)
-		http.Error(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
+		utils.SendError2(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
 		return
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
 		log.Println("Error checking quota update:", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	if rowsAffected == 0 {
-		http.Error(w, "Insufficient quota", http.StatusForbidden)
+		utils.SendError2(w, "Insufficient quota", http.StatusForbidden)
 		return
 	}
 

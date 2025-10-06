@@ -27,7 +27,7 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(50 << 20)
 	if err != nil {
-		http.Error(w, "Could not parse multipart form", http.StatusBadRequest)
+		utils.SendError2(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
 
@@ -130,7 +130,7 @@ func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Respond
 	if len(errMsg) > 0 {
-		http.Error(w, fmt.Sprintf("Errors: %v", errMsg), http.StatusInternalServerError)
+		utils.SendError2(w, fmt.Sprintf("Errors: %v", errMsg), http.StatusInternalServerError)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r
 	stream, err := v.VideoClient.GetVideo(r.Context(), req)
 
 	if err != nil {
-		http.Error(w, "Video not found", http.StatusNotFound)
+		utils.SendError2(w, "Video not found", http.StatusNotFound)
 		return
 	}
 
@@ -177,7 +177,7 @@ func (v *VideoHandler) GetVideoWithIDandServeItInChunks(w http.ResponseWriter, r
 			break
 		}
 		if err != nil {
-			http.Error(w, "error streaming video", http.StatusInternalServerError)
+			utils.SendError2(w, "error streaming video", http.StatusInternalServerError)
 			return
 		}
 

@@ -89,62 +89,41 @@ func HandlePaymentSessionCompleted(db *sql.DB, event stripe.Event) error {
 }
 
 func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
-	var inv stripe.Invoice
-
-	// Parse Stripe invoice
-	if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
-		return fmt.Errorf("failed to parse invoice.payment_succeeded: %w", err)
+	var sub stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
+		return fmt.Errorf("failed to parse subscription.updated: %w", err)
 	}
 
-	// Optional: Pretty log the invoice
-	if pretty, err := json.MarshalIndent(inv, "", "  "); err == nil {
-		log.Println("Parsed Stripe Invoice:\n", string(pretty))
-	}
+	customerID := sub.Customer.ID
+	status := string(sub.Status)
 
-	// Extract info
-	custmoreID := inv.Customer.ID
-
-	// Begin transaction
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin DB transaction: %w", err)
-	}
-
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		} else {
-			_ = tx.Commit()
-		}
-	}()
-
-	_, err = tx.Exec(`
-	UPDATE stripe
-	SET subscription_status = 'past_due',
-		cancel_at_period_end = true,
-		canceled_at = now()
-	WHERE stripe_customer_id = $1
-`, custmoreID)
+	_, err := db.Exec(`
+        UPDATE stripe
+        SET subscription_status = $1,
+            cancel_at_period_end = $2,
+            canceled_at = CASE WHEN $2 = true THEN now() ELSE NULL END
+        WHERE stripe_customer_id = $3
+    `, status, sub.CancelAtPeriodEnd, customerID)
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
 	}
 
-	log.Println("Subscription canceled and user downgraded successfully.")
 	return nil
-
 }
 
 func HandleSubscriptionDeleted(db *sql.DB, event stripe.Event) error {
-	var inv stripe.Invoice
+	var sub stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
+		return fmt.Errorf("failed to parse subscription.deleted: %w", err)
+	}
 
-	custmoreID := inv.Customer.ID
-	userID := inv.Metadata["userID"]
+	customerID := sub.Customer.ID
+	userID := sub.Metadata["userID"]
 
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin DB transaction: %w", err)
 	}
-
 	defer func() {
 		if err != nil {
 			_ = tx.Rollback()
@@ -154,21 +133,27 @@ func HandleSubscriptionDeleted(db *sql.DB, event stripe.Event) error {
 	}()
 
 	_, err = tx.Exec(`
-	UPDATE stripe
-	SET subscription_status = 'past_due',
-		cancel_at_period_end = true
-	WHERE stripe_customer_id = $1
-`, custmoreID)
+        UPDATE stripe
+        SET subscription_status = 'canceled',
+            cancel_at_period_end = false,
+            canceled_at = now()
+        WHERE stripe_customer_id = $1
+    `, customerID)
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
 	}
 
-	_, err = tx.Exec(`UPDATE users SET account_type = 'basic', post_api_calls = 5, edit_api_calls = 5, edit_api_calls  =5 WHERE uuid = $1`, userID)
-
+	_, err = tx.Exec(`
+        UPDATE users
+        SET account_type = 'basic',
+            post_api_calls = 5,
+            get_api_calls = 5,
+            edit_api_calls = 5
+        WHERE uuid = $1
+    `, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update user record: %w", err)
 	}
 
 	return nil
-
 }

@@ -147,8 +147,7 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("Error querying user for login: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
@@ -302,11 +301,9 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 
 	if err != nil {
 		if err == http.ErrNoCookie {
-			log.Println("Auth failed: No 'access_token' cookie found.")
-			http.Error(w, "Unauthorized: Authentication token required", http.StatusUnauthorized)
+			utils.SendError(w, http.StatusUnauthorized, "Unauthorized: Authentication token required")
 			return
 		}
-		log.Printf("Auth failed: Error reading cookie: %v", err)
 		utils.SendError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
@@ -318,7 +315,6 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 	claims, err := utils.ParseToken(tokenString, []byte(refreshJWTKey))
 
 	if err != nil {
-		log.Printf("Invalid refresh token: %v", err)
 		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: Invalid token")
 		return
 	}
@@ -477,7 +473,6 @@ func updateUserPasswordLogic(db *sql.DB, r *http.Request) error {
 
 	return nil
 }
-
 
 func (h *UserHandler) UpdateUserInfo(w http.ResponseWriter, r *http.Request) {
 	var user models.UpdateUser

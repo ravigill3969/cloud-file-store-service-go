@@ -47,6 +47,7 @@ type SendAllToUserImagesUI struct {
 	UploadDate       time.Time `json:"upload_date"`
 	Width            int       `json:"width"`
 	Height           int       `json:"height"`
+	CDNUrl           string    `json:"cdn_url"`
 }
 
 type UploadGoRoutines struct {
@@ -57,4 +58,6 @@ type UploadGoRoutines struct {
 	Height           int    `json:"height"`
 	S3Key            string `jso:"s3_key"`
 	FileSize         int64  `json:"file_size_bytes"`
+	CDNurl           string `json:"cdn_url"`
+	Key              string `json:"key"`
 }

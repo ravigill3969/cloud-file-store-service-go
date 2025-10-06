@@ -34,8 +34,7 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
 		return
 	}
 
@@ -85,7 +84,7 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 
 	if !ok {
 		log.Printf("Error: User ID not found in context")
-		http.Error(w, "Unauthorized: User ID not provided", http.StatusUnauthorized)
+		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
 		return
 	}
 
@@ -112,9 +111,7 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	_, err = subscription.Update(user.SubscriptionId, params)
 
 	if err != nil {
-		fmt.Println(err)
-
-		http.Error(w, "Failed to set subscription cancel at period end", http.StatusInternalServerError)
+		utils.SendError(w, http.StatusInternalServerError, "Failed to set subscription cancel at period end")
 		return
 	}
 
