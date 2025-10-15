@@ -27,4 +27,5 @@ func FileRoutes(mux *http.ServeMux, fh *handlers.FileHandler, redis *redis.Clien
 	mux.HandleFunc("GET /api/file/get-file/{id}", fh.ServeFileWithIDForThirdParty)
 	mux.HandleFunc("POST /api/file/upload/{publicKey}/secure/{secretKey}", fh.UploadAsThirdParty)
 	mux.HandleFunc("POST /api/file/edit/{id}/{publicKey}/secure/{secretKey}", fh.GetFileEditStoreInS3ThenInPsqlWithWidthAndSize)
+	mux.HandleFunc("DELETE /api/file/delete/{id}/{publicKey}/secure/{secretKey}", fh.DeleteImageForThirdParty)
 }

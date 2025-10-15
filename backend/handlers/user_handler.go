@@ -339,7 +339,7 @@ func (h *UserHandler) RefreshTokenVerify(w http.ResponseWriter, r *http.Request)
 
 	defer cancel()
 
-	redisKey := fmt.Sprintf("refresh:" + userID)
+	redisKey := fmt.Sprintf("refresh:%s", userID)
 
 	err = h.RedisClient.Set(redisCtx, redisKey, refreshToken, 24*time.Hour*30).Err()
 

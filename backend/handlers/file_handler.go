@@ -127,8 +127,6 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 		&user.PostAPICalls,
 	)
 
-	fmt.Println(err)
-
 	if user.SecretKey != "" && secretKey != user.SecretKey {
 		utils.SendError(w, http.StatusUnauthorized, "Invalid public or secret key")
 		return
@@ -480,7 +478,6 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fmt.Println(image)
 		img = append(img, image)
 	}
 
@@ -778,15 +775,10 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 			utils.SendError2(w, "Image not found", http.StatusNotFound)
 
 		}
-
-		fmt.Println(err)
 		return
 	}
 
 	resp, err := http.Get(url)
-
-	fmt.Println(err)
-	fmt.Println(resp.Header.Get("Content-Type"))
 
 	if err != nil || resp.StatusCode != http.StatusOK {
 		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
@@ -850,14 +842,13 @@ func (fh *FileHandler) serveFromCache(w http.ResponseWriter, photoID string) boo
 		return false
 	}
 
-	log.Printf("Served image %s from cache (%d bytes)", photoID, len(imageBytes))
 	return true
 }
 
 func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, photoID string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	fmt.Println(photoID)
+
 	row := fh.DB.QueryRowContext(ctx, `SELECT url FROM images WHERE id = $1`, photoID)
 	var url string
 	err := row.Scan(&url)
@@ -905,13 +896,9 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	log.Printf("Served image %s from source (%d bytes)", photoID, cacheBuffer.Len())
-
 	go func() {
 		if err := fh.cacheImageInRedis(photoID, contentType, cacheBuffer.Bytes()); err != nil {
 			log.Printf("Error caching image %s: %v", photoID, err)
-		} else {
-			log.Printf("Successfully cached image %s (%d bytes)", photoID, cacheBuffer.Len())
 		}
 	}()
 }
@@ -1032,24 +1019,6 @@ func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
 		return
 	}
-
-	// fh.S3Client.DeleteObject(&s3.DeleteObjectInput{
-	// 	Bucket: aws.String(fh.S3Bucket),
-	// 	Key:    aws.String(s3Key),
-	// })
-
-	// if err != nil {
-	// 	return fmt.Errorf("failed to delete object from S3: %w", err)
-	// }
-
-	// // Optional: Wait for deletion to be confirmed (for consistency)
-	// err = fh.S3Client.WaitUntilObjectNotExists(ctx, &s3.HeadObjectInput{
-	// 	Bucket: aws.String(h.S3Bucket),
-	// 	Key:    aws.String(s3Key),
-	// })
-	// if err != nil {
-	// 	return fmt.Errorf("delete confirmed failed: %w", err)
-	// }
 
 	utils.SendJSON(w, http.StatusOK, "Image deleted successfully")
 
@@ -1377,4 +1346,70 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
 		"url": imageURL,
 	})
+}
+
+func (fh *FileHandler) DeleteImageForThirdParty(w http.ResponseWriter, r *http.Request) {
+	parsedURL := strings.Split(r.URL.Path, "/")
+
+	if len(parsedURL) < 7 {
+		utils.SendError2(w, "Invalid URL", http.StatusBadRequest)
+		return
+	}
+	imageID := parsedURL[4]
+
+	publicKey := parsedURL[5]
+	secretKey := parsedURL[7]
+
+	user_id, err := fh.GetUserIdFromSecretKeyAndPublicKey(publicKey, secretKey)
+
+	if err != nil {
+		utils.SendError(w, http.StatusUnauthorized, "You are  unauthorized to delete this image!")
+		return
+	}
+
+	res, err := fh.DB.Exec(
+		`UPDATE images SET deleted = TRUE, deleted_at = now() WHERE id = $1 AND deleted = false AND user_id = $2 `,
+		imageID, user_id,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			utils.SendError(w, http.StatusNotFound, "Not found")
+		} else {
+			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "Could not determine deletion result")
+		return
+	}
+
+	if rowsAffected == 0 {
+		utils.SendError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
+		return
+	}
+
+}
+
+func (fh *FileHandler) GetUserIdFromSecretKeyAndPublicKey(pubKey, secKey string) (uuid.UUID, error) {
+	var id uuid.UUID
+
+	query := `SELECT uuid FROM users WHERE public_key = $1 AND secret_key = $2`
+	err := fh.DB.QueryRow(query, pubKey, secKey).Scan(&id)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return uuid.Nil, fmt.Errorf("no user found for given keys")
+		}
+		return uuid.Nil, err
+	}
+
+	if id == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("invalid UUID retrieved")
+	}
+
+	return id, nil
 }

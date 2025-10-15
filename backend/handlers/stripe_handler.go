@@ -154,6 +154,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	switch event.Type {
 
 	case "checkout.session.completed":
+		fmt.Println("session compledeted")
 		err = utils.HandlePaymentSessionCompleted(s.Db, event)
 		fmt.Println("created session completed")
 		if err != nil {

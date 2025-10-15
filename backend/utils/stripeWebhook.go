@@ -104,6 +104,7 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
             canceled_at = CASE WHEN $2 = true THEN now() ELSE NULL END
         WHERE stripe_customer_id = $3
     `, status, sub.CancelAtPeriodEnd, customerID)
+	
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
 	}

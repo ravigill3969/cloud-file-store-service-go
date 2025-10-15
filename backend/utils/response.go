@@ -44,6 +44,7 @@ func SendError(w http.ResponseWriter, statusCode int, message string) {
 		http.Error(w, "Failed to encode error response", http.StatusInternalServerError)
 	}
 }
+
 func SendError2(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)

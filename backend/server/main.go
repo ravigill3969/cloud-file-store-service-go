@@ -76,7 +76,7 @@ func main() {
 
 	accessKey := os.Getenv("AWS_S3_BUCKET_ACCESS_KEY")
 	secretKey := os.Getenv("AWS_S3_BUCKET_SECRET_ACCESS_KEY")
-	domainAWSCloudfront := os.Getenv("AWS_CLOUDFRONT_DOMAIN")
+	// domainAWSCloudfront := os.Getenv("AWS_CLOUDFRONT_DOMAIN")
 
 	if accessKey == "" || secretKey == "" {
 		log.Fatal("AWS credentials are required")
@@ -102,7 +102,7 @@ func main() {
 		S3Client:            s3Client,
 		S3Bucket:            bucket,
 		Redis:               redisClient,
-		AWSCloudFrontDomain: domainAWSCloudfront,
+		AWSCloudFrontDomain: "water",
 	}
 	stripeHandler := &handlers.Stripe{
 		Db: db,
@@ -120,10 +120,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to connect to gRPC server: %v", err)
 	}
-	// It's critical to defer closing the connection
 	defer grpcConn.Close()
 
-	// Create the gRPC client
+	
 
 	videoClient := pb.NewVideoServiceClient(grpcConn)
 
