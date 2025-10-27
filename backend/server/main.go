@@ -116,13 +116,11 @@ func main() {
 	}()
 
 	log.Println("Connecting to gRPC video service...")
-	grpcConn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpcConn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to gRPC server: %v", err)
 	}
 	defer grpcConn.Close()
-
-	
 
 	videoClient := pb.NewVideoServiceClient(grpcConn)
 
