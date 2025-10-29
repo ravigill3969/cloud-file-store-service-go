@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	fileSizeLimitPerDayInMb = 344
+	fileSizeLimitPerDayInMb = 10
 )
 
 type FileHandler struct {
@@ -452,7 +452,7 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := fh.DB.Query(`SELECT id, original_filename, mime_type, upload_date, width, height, cdn_url FROM images WHERE user_id = $1 AND deleted = FALSE`, userId)
+	rows, err := fh.DB.Query(`SELECT id, original_filename, mime_type, upload_date, width, height FROM images WHERE user_id = $1 AND deleted = FALSE`, userId)
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Query failed!")
 		return
@@ -470,7 +470,6 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 			&image.UploadDate,
 			&image.Width,
 			&image.Height,
-			&image.CDNUrl,
 		)
 		if err != nil {
 			fmt.Println(err)
@@ -576,6 +575,7 @@ func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.
 					errChn <- fmt.Errorf("daily limit reached %s", f.Filename)
 					val = sizeInMB
 				} else {
+					val = sizeInMB
 					errChn <- fmt.Errorf("internal server error %s", f.Filename)
 				}
 

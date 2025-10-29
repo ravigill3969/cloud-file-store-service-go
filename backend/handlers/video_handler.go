@@ -26,6 +26,7 @@ type VideoHandler struct {
 func (v *VideoHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(50 << 20)
+	
 	if err != nil {
 		utils.SendError2(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
@@ -242,7 +243,12 @@ func (v *VideoHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.R
 	}
 
 	fileHeader := files[0]
+	if fileHeader.Size > 52428800 {
+		utils.SendError(w, http.StatusBadRequest, "File size limit is 50mb")
+		return
+	}
 	file, err := fileHeader.Open()
+
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "Failed to open uploaded file: "+err.Error())
 		return

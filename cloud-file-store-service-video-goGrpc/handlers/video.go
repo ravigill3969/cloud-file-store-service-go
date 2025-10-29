@@ -20,11 +20,12 @@ import (
 
 type Server struct {
 	pb.UnimplementedVideoServiceServer
-	DB         *sql.DB
-	S3Uploader *manager.Uploader
-	S3Client   *s3.Client
-	S3Bucket   string
-	Redis      *redis.Client
+	DB                  *sql.DB
+	S3Uploader          *manager.Uploader
+	S3Client            *s3.Client
+	S3Bucket            string
+	Redis               *redis.Client
+	AWSCloudFrontDomain string
 }
 
 func (s *Server) UploadVideo(stream pb.VideoService_UploadVideoServer) error {
@@ -165,7 +166,6 @@ func (s *Server) GetVideo(req *pb.GetVideoRequest, stream pb.VideoService_GetVid
 			if err := stream.Send(&pb.GetVideoResponse{
 				ChunkData: buf[:n],
 			}); err != nil {
-
 				return fmt.Errorf("failed to send chunk: %w", err)
 			}
 		}
@@ -344,7 +344,7 @@ func (s *Server) DeleteFromDB(vid string, userID string) error {
 	})
 
 	if err != nil {
-		return fmt.Errorf("Unable to delete video from Cloud")
+		return fmt.Errorf("unable to delete video from Cloud")
 	}
 
 	return nil

@@ -21,7 +21,7 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 	periodStart := time.Unix(inv.PeriodStart, 0)
 	periodEnd := time.Unix(inv.PeriodEnd, 0)
 
-	// customerId := inv.Customer.ID
+	
 	userID := inv.Parent.SubscriptionDetails.Metadata["userID"]
 
 	stripe.Key = os.Getenv("STRIPE_KEY")
@@ -94,19 +94,21 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
 		return fmt.Errorf("failed to parse subscription.updated: %w", err)
 	}
 
+	fmt.Println(string(event.Data.Raw))
+
 	customerID := sub.Customer.ID
 	status := string(sub.Status)
 
-	_, err := db.Exec(`
+		_, err := db.Exec(`
         UPDATE stripe
         SET subscription_status = $1,
-            cancel_at_period_end = $2,
-            canceled_at = CASE WHEN $2 = true THEN now() ELSE NULL END
+		cancel_at_period_end = $2,
+		canceled_at = CASE WHEN $2 = true THEN now() ELSE NULL END
         WHERE stripe_customer_id = $3
-    `, status, sub.CancelAtPeriodEnd, customerID)
-	
-	if err != nil {
-		return fmt.Errorf("failed to update stripe record: %w", err)
+		`, status, sub.CancelAtPeriodEnd, customerID)
+		
+		if err != nil {
+			return fmt.Errorf("failed to update stripe record: %w", err)
 	}
 
 	return nil

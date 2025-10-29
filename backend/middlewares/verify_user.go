@@ -61,7 +61,7 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		key := fmt.Sprintf("refresh: %s", claims.UserID)
+		key := fmt.Sprintf("refresh:%s", string(claims.UserID))
 
 		requestCtx := r.Context()
 		redisOpCtx, cancel := context.WithTimeout(requestCtx, 5*time.Second)

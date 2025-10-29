@@ -61,7 +61,7 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if CustomerId != "" {
+	if CustomerId == "" {
 		params.Customer = &CustomerId
 	}
 
@@ -83,7 +83,6 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		log.Printf("Error: User ID not found in context")
 		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
 		return
 	}
@@ -94,7 +93,6 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 
-		fmt.Println(err)
 		if err == sql.ErrNoRows {
 			utils.SendError(w, http.StatusNotFound, "Not found")
 
