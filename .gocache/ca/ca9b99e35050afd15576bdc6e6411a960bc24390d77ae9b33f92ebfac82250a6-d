@@ -1,6 +1,0 @@
-./cleanupSoftDeletedImages.go
-./jwt.go
-./key_generator.go
-./password.go
-./response.go
-./stripeWebhook.go
