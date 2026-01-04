@@ -23,12 +23,13 @@ func GlobalRateLimiter(redisClient *redis.Client) func(http.Handler) http.Handle
 			key := fmt.Sprintf("rate_limit:site:%s", ip)
 
 			allowed, err := checkRateLimit(redisClient, key)
+
 			if err != nil {
-				utils.SendError(w, http.StatusInternalServerError, "Internal Error")
+				utils.RespondError(w, http.StatusInternalServerError, "Internal Error")
 				return
 			}
 			if !allowed {
-				utils.SendError(w, http.StatusTooManyRequests, "Too many requests, wait for one minute!")
+				utils.RespondError(w, http.StatusTooManyRequests, "Too many requests, wait for one minute!")
 				return
 			}
 

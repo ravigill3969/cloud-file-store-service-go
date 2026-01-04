@@ -1,0 +1,4 @@
+./file_routes.go
+./stripe_routes.go
+./user_routes.go
+./video_routes.go

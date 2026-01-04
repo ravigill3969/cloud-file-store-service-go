@@ -20,10 +20,6 @@ import (
 	"github.com/ravigill3969/cloud-file-store/backend/routes"
 	"github.com/ravigill3969/cloud-file-store/backend/utils"
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
-	pb "github.com/ravigill3969/cloud-file-store-service-video-goGrpc/video"
 )
 
 func main() {
@@ -69,8 +65,15 @@ func main() {
 	}
 	bucket := os.Getenv("AWS_BUCKET_NAME")
 
-	if bucket == "" {
+	if bucket == " " {
 		fmt.Println("bucket is required")
+		return
+	}
+
+	backend_url := os.Getenv("BACKEND_URL")
+
+	if backend_url == " " {
+		fmt.Println("backend_url is required")
 		return
 	}
 
@@ -103,6 +106,7 @@ func main() {
 		S3Bucket:            bucket,
 		Redis:               redisClient,
 		AWSCloudFrontDomain: "water",
+		BACKEND_URL : backend_url,
 	}
 	stripeHandler := &handlers.Stripe{
 		Db: db,
@@ -115,29 +119,13 @@ func main() {
 		}
 	}()
 
-	log.Println("Connecting to gRPC video service...")
-	grpcConn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("Failed to connect to gRPC server: %v", err)
-	}
-	defer grpcConn.Close()
-
-	videoClient := pb.NewVideoServiceClient(grpcConn)
-
-	videoHandler := handlers.VideoHandler{
-		VideoClient: videoClient,
-		RedisClient: redisClient,
-		DB:          db,
-	}
-
 	mux.HandleFunc("/webhook", stripeHandler.HandleWebhook)
 	routes.RegisterUserRoutes(mux, userHandler, redisClient)
 	routes.FileRoutes(mux, fileHandler, redisClient)
 	routes.StripeRoutes(mux, stripeHandler, redisClient)
-	routes.VideoRoutes(mux, &videoHandler, redisClient)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		utils.SendError(w, http.StatusBadGateway, "This route donot exist")
+		utils.RespondError(w, http.StatusBadGateway, "This route donot exist")
 	})
 
 	middleware := middleware.CORS(
@@ -145,8 +133,6 @@ func main() {
 			middleware.GlobalRateLimiter(redisClient)(mux),
 		),
 	)
-
-	log.Println("gRPC client for video service is ready.")
 
 	fmt.Printf("server is running on http://localhost:%s\n", PORT)
 

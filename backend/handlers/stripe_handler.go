@@ -34,7 +34,7 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
 		return
 	}
 
@@ -61,7 +61,7 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if CustomerId == "" {
+	if CustomerId != "" {
 		params.Customer = &CustomerId
 	}
 
@@ -70,20 +70,20 @@ func (s *Stripe) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 	result, err := session.New(params)
 
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondInternal(w, err, "Unable to create checkout session")
 		return
 	}
 
 	url := result.URL
 
-	utils.SendJSON(w, http.StatusOK, url)
+	utils.RespondSuccess(w, http.StatusOK, map[string]string{"checkout_url": url})
 }
 
 func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
 		return
 	}
 
@@ -94,10 +94,10 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 
 		if err == sql.ErrNoRows {
-			utils.SendError(w, http.StatusNotFound, "Not found")
+			utils.RespondError(w, http.StatusNotFound, "Subscription not found")
 
 		} else {
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+			utils.RespondInternal(w, err, "Failed to fetch subscription")
 		}
 		return
 	}
@@ -109,7 +109,7 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	_, err = subscription.Update(user.SubscriptionId, params)
 
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Failed to set subscription cancel at period end")
+		utils.RespondInternal(w, err, "Failed to set subscription cancel at period end")
 		return
 	}
 
@@ -119,15 +119,15 @@ func (s *Stripe) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 
 		if err == sql.ErrNoRows {
-			utils.SendError(w, http.StatusInternalServerError, "Unable to update")
+			utils.RespondInternal(w, err, "Unable to update subscription status")
 
 		} else {
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+			utils.RespondInternal(w, err, "Failed to update subscription")
 		}
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK)
+	utils.RespondSuccess(w, http.StatusOK, map[string]string{"status": "cancel_at_period_end"})
 
 }
 
@@ -156,7 +156,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		err = utils.HandlePaymentSessionCompleted(s.Db, event)
 		fmt.Println("created session completed")
 		if err != nil {
-			utils.SendError(w, http.StatusInternalServerError, err.Error())
+			utils.RespondInternal(w, err, "Failed to mark session complete")
 			return
 		}
 		return
@@ -165,7 +165,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		err = utils.HandleInvoicePaid(s.Db, event)
 		fmt.Println("invoice paid")
 		if err != nil {
-			utils.SendError(w, http.StatusInternalServerError, "Payment failed")
+			utils.RespondInternal(w, err, "Payment failed")
 			return
 		}
 		return
@@ -179,7 +179,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		err := utils.HandleSubscriptionUpdated(s.Db, event)
 
 		if err != nil {
-			utils.SendError(w, http.StatusInternalServerError, "Unabel to cancel subscription")
+			utils.RespondInternal(w, err, "Unable to update subscription")
 			return
 		}
 
@@ -191,7 +191,7 @@ func (s *Stripe) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		err := utils.HandleSubscriptionDeleted(s.Db, event)
 
 		if err != nil {
-			utils.SendError(w, http.StatusInternalServerError, "Unabel to cancel subscription")
+			utils.RespondInternal(w, err, "Unable to cancel subscription")
 			return
 		}
 

@@ -27,11 +27,11 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			if err == http.ErrNoCookie {
 				fmt.Println(err)
-				utils.SendError(w, http.StatusUnauthorized, "Unauthorized: Authentication token required")
+				utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: Authentication token required")
 				return
 			}
 			log.Printf("Auth failed: Error reading cookie: %v", err)
-			utils.SendError(w, http.StatusBadRequest, "Bad Request")
+			utils.RespondError(w, http.StatusBadRequest, "Bad Request")
 			return
 		}
 
@@ -40,11 +40,11 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			if err == http.ErrNoCookie {
 				log.Println("Auth failed: No 'refresh_token' cookie found.")
-				utils.SendError2(w, "Unauthorized: Authentication token required", http.StatusUnauthorized)
+				utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: Authentication token required")
 				return
 			}
 			log.Printf("Auth failed: Error reading cookie: %v", err)
-			utils.SendError(w, http.StatusBadRequest, "Bad Request")
+			utils.RespondError(w, http.StatusBadRequest, "Bad Request")
 			return
 		}
 
@@ -57,7 +57,7 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		claims, err := utils.ParseToken(tokenString, []byte(jwtKey))
 		if err != nil {
 			log.Printf("Auth failed: Invalid or expired token: %v", err)
-			utils.SendError2(w, "Unauthorized: Invalid or expired token", http.StatusUnauthorized)
+			utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: Invalid or expired token")
 			return
 		}
 
@@ -70,12 +70,12 @@ func (redis *RedisStruct) AuthMiddleware(next http.Handler) http.Handler {
 		refreshTokenFromRedis, err := redis.RedisClient.Get(redisOpCtx, key).Result()
 
 		if err != nil {
-			utils.SendError2(w, "Something went incredibly wrong!", http.StatusInternalServerError)
+			utils.RespondError(w, http.StatusInternalServerError, "Something went incredibly wrong!")
 			return
 		}
 
 		if refreshTokenFromRedis != rTokenString {
-			utils.SendError2(w, "Unauthorized", http.StatusUnauthorized)
+			utils.RespondError(w, http.StatusUnauthorized, "Unauthorized")
 			return
 		}
 

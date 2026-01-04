@@ -21,8 +21,22 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 	periodStart := time.Unix(inv.PeriodStart, 0)
 	periodEnd := time.Unix(inv.PeriodEnd, 0)
 
-	
-	userID := inv.Parent.SubscriptionDetails.Metadata["userID"]
+	// Get userID from invoice lines metadata (subscription metadata)
+	var userID string
+	if inv.Lines != nil && len(inv.Lines.Data) > 0 {
+		for _, line := range inv.Lines.Data {
+			if line.Metadata != nil {
+				if uid, ok := line.Metadata["userID"]; ok {
+					userID = uid
+					break
+				}
+			}
+		}
+	}
+
+	if userID == "" {
+		return fmt.Errorf("userID not found in invoice line metadata")
+	}
 
 	stripe.Key = os.Getenv("STRIPE_KEY")
 
@@ -51,7 +65,7 @@ func HandleInvoicePaid(db *sql.DB, event stripe.Event) error {
 	price_id = $4
 	WHERE user_id = $5
 	`,
-		periodStart, periodEnd, true, priceID, userID)
+		periodStart, periodEnd, false, priceID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update stripe record: %w", err)
 	}
@@ -70,7 +84,7 @@ func HandlePaymentSessionCompleted(db *sql.DB, event stripe.Event) error {
 		return fmt.Errorf("something went wrong")
 
 	}
-	userID := session.Metadata[string("userID")]
+	userID := session.Metadata["userID"]
 	priceId := os.Getenv("STRIPE_PRICE_ID")
 	subscriptionID := session.Subscription.ID
 	customerID := session.Customer.ID
@@ -99,16 +113,16 @@ func HandleSubscriptionUpdated(db *sql.DB, event stripe.Event) error {
 	customerID := sub.Customer.ID
 	status := string(sub.Status)
 
-		_, err := db.Exec(`
+	_, err := db.Exec(`
         UPDATE stripe
         SET subscription_status = $1,
 		cancel_at_period_end = $2,
 		canceled_at = CASE WHEN $2 = true THEN now() ELSE NULL END
         WHERE stripe_customer_id = $3
 		`, status, sub.CancelAtPeriodEnd, customerID)
-		
-		if err != nil {
-			return fmt.Errorf("failed to update stripe record: %w", err)
+
+	if err != nil {
+		return fmt.Errorf("failed to update stripe record: %w", err)
 	}
 
 	return nil

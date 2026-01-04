@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager/s3manageriface"
 	"github.com/google/uuid"
 	middleware "github.com/ravigill3969/cloud-file-store/backend/middlewares"
@@ -33,7 +34,26 @@ import (
 
 const (
 	fileSizeLimitPerDayInMb = 10
+	maxVideoUploadSizeBytes = 50 << 20
+	maxAudioUploadSizeBytes = 30 << 20
+	maxMediaFormMemory      = 100 << 20
 )
+
+type mediaType string
+
+const (
+	mediaTypeImage mediaType = "image"
+	mediaTypeVideo mediaType = "video"
+	mediaTypeAudio mediaType = "audio"
+)
+
+type mediaUploadResponse struct {
+	FileName  string `json:"file_name"`
+	MediaType string `json:"media_type"`
+	URL       string `json:"url,omitempty"`
+	CDNURL    string `json:"cdn_url,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
 
 type FileHandler struct {
 	DB                  *sql.DB
@@ -42,6 +62,7 @@ type FileHandler struct {
 	S3Bucket            string
 	Redis               *redis.Client
 	AWSCloudFrontDomain string
+	BACKEND_URL         string
 }
 
 func (fh *FileHandler) CreatePresignedUploadRequest(fileName, contentType string, key string) (*string, error) {
@@ -63,27 +84,27 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	err := r.ParseMultipartForm(10 << 20)
 
 	if err != nil {
-		utils.SendError(w, http.StatusBadRequest, "Could not parse multipart form")
+		utils.RespondError(w, http.StatusBadRequest, "Could not parse multipart form")
 		return
 	}
 
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
-		utils.SendError(w, http.StatusBadRequest, "File not provided")
+		utils.RespondError(w, http.StatusBadRequest, "File not provided")
 		return
 	}
 
 	const maxSizeBytes = 5 * 1024 * 1024
 
 	if fileHeader.Size > maxSizeBytes {
-		utils.SendError(w, http.StatusBadRequest, "Image size exceeds 5MB limit")
+		utils.RespondError(w, http.StatusBadRequest, "Image size exceeds 5MB limit")
 		return
 	}
 
 	defer file.Close()
 
 	if fileHeader.Filename == "" {
-		utils.SendError(w, http.StatusBadRequest, "Filename is required")
+		utils.RespondError(w, http.StatusBadRequest, "Filename is required")
 		return
 	}
 
@@ -92,7 +113,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	parsedURL := strings.Split(path, "/")
 
 	if len(parsedURL) != 6 && parsedURL[1] != "api" && parsedURL[4] != "secure" {
-		utils.SendError(w, http.StatusBadRequest, "Invalid path")
+		utils.RespondError(w, http.StatusBadRequest, "Invalid path")
 
 		return
 	}
@@ -128,11 +149,11 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	)
 
 	if user.SecretKey != "" && secretKey != user.SecretKey {
-		utils.SendError(w, http.StatusUnauthorized, "Invalid public or secret key")
+		utils.RespondError(w, http.StatusUnauthorized, "Invalid public or secret key")
 		return
 	}
 	if err != nil {
-		utils.SendError(w, http.StatusUnauthorized, "Post req limit reached for this month")
+		utils.RespondError(w, http.StatusUnauthorized, "Post req limit reached for this month")
 		return
 	}
 
@@ -140,7 +161,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 
 	fileBytes, err := io.ReadAll(file)
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Error reading file")
+		utils.RespondError(w, http.StatusInternalServerError, "Error reading file")
 		return
 	}
 
@@ -149,20 +170,20 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	err = validateContentType(contentType)
 
 	if err != nil {
-		utils.SendError(w, http.StatusUnsupportedMediaType, "Unsupported media")
+		utils.RespondError(w, http.StatusUnsupportedMediaType, "Unsupported media")
 		return
 	}
 
 	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, contentType, key)
 
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	reqHttp, err := http.NewRequest("PUT", *presignedURL, bytes.NewReader(fileBytes))
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 
 		return
 	}
@@ -173,7 +194,7 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	client := &http.Client{}
 	resp, err := client.Do(reqHttp)
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 	defer resp.Body.Close()
@@ -181,26 +202,33 @@ func (fh *FileHandler) UploadAsThirdParty(w http.ResponseWriter, r *http.Request
 	if resp.StatusCode != 200 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		fmt.Println("S3 Response error:", resp.Status, string(bodyBytes))
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
-	imageURL := fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
+	// imageURL := fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
 
 	query := `INSERT INTO images (user_id , s3_key, original_filename, mime_type, file_size_bytes, url, cdn_url ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING url, original_filename, id`
 
 	var fileUpload models.UploadFile
 
-	err = fh.DB.QueryRow(query, user.ID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL).Scan(&fileUpload.URL, &fileUpload.OriginalFilename, &fileUpload.Id, &imageURL)
+	err = fh.DB.QueryRow(query, user.ID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL, "cdn_url").Scan(&fileUpload.URL, &fileUpload.OriginalFilename, &fileUpload.Id)
 
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Unable to save data")
+		utils.RespondError(w, http.StatusInternalServerError, "Unable to save data")
 		return
 	}
 
-	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
-		"url": imageURL,
+	host := os.Getenv("BACKEND_URL")
+
+	// /api/file/get-file/{id}
+	params := fmt.Sprintf("/api/file/get-file/%s", fileUpload.Id)
+
+	url := host + params
+
+	utils.RespondThirdParty(w, http.StatusOK, map[string]string{
+		"url": url,
 	})
 
 }
@@ -242,11 +270,48 @@ func validateContentType(contentType string) error {
 	return fmt.Errorf("unsupported image format: %s", contentType)
 }
 
-func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.ResponseWriter, r *http.Request) {
+func validateAudioContentType(contentType string) error {
+	allowedTypes := []string{
+		"audio/mpeg",
+		"audio/mp3",
+		"audio/wav",
+		"audio/x-wav",
+		"audio/webm",
+		"audio/ogg",
+		"audio/flac",
+		"audio/aac",
+		"audio/mp4",
+		"audio/3gpp",
+		"audio/3gpp2",
+		"audio/x-m4a",
+	}
+
+	for _, t := range allowedTypes {
+		if contentType == t {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported audio format: %s", contentType)
+}
+
+func classifyMedia(contentType string) (mediaType, error) {
+	switch {
+	case strings.HasPrefix(contentType, "image/"):
+		return mediaTypeImage, validateContentType(contentType)
+	case strings.HasPrefix(contentType, "video/"):
+		return mediaTypeVideo, validateVideoContentType(contentType)
+	case strings.HasPrefix(contentType, "audio/"):
+		return mediaTypeAudio, validateAudioContentType(contentType)
+	default:
+		return "", fmt.Errorf("unsupported content type: %s", contentType)
+	}
+}
+
+func (fh *FileHandler) HandleImageResizeRequestForThirdParty(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 7 {
-		utils.SendError2(w, "Invalid URL", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL")
 		return
 	}
 	imageID := parsedURL[4]
@@ -261,7 +326,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 	heightInt, errH := strconv.Atoi(heightStr)
 
 	if err != nil || errH != nil {
-		utils.SendError2(w, "Width and height are required and must be integers", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Width and height are required and must be integers")
 		return
 	}
 
@@ -297,15 +362,15 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			utils.SendError2(w, "Image not found", http.StatusNotFound)
+			utils.RespondError(w, http.StatusNotFound, "Image not found")
 		} else {
-			utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		}
 		return
 	}
 
 	if widthInt == int(image.Width) && heightInt == int(image.Height) {
-		utils.SendJSON(w, http.StatusOK, map[string]string{
+		utils.RespondSuccess(w, http.StatusOK, map[string]string{
 			"id":  image.ID.String(),
 			"url": image.URL,
 		})
@@ -314,14 +379,14 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	str, key, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 	if err != nil {
-		utils.SendError2(w, "Image resize failed", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Image resize failed")
 		return
 	}
 
 	tx, err := fh.DB.Begin()
 	if err != nil {
 		log.Println("Failed to start transaction:", err)
-		utils.SendError2(w, "Server error", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Server error")
 		return
 	}
 	defer func() {
@@ -353,7 +418,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 
 	if err != nil {
 		log.Println("Image insert failed:", err)
-		utils.SendError2(w, "Failed to insert image", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to insert image")
 		return
 	}
 
@@ -370,25 +435,25 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSize(w http.Res
 `, image.UserID, secretKey, publicKey)
 	if err != nil {
 		log.Println("Failed to decrement edit_api_calls:", err)
-		utils.SendError2(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to update, API quota limit reached")
 		return
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
 		log.Println("Error checking quota update:", err)
-		utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 	if rowsAffected == 0 {
-		utils.SendError2(w, "Insufficient quota", http.StatusForbidden)
+		utils.RespondError(w, http.StatusForbidden, "Insufficient quota")
 		return
 	}
 
 	url := os.Getenv("BACKEND_URL")
 	imageURL := fmt.Sprintf("%s/api/file/get-file/%s", url, imageID)
 
-	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
+	utils.RespondThirdParty(w, http.StatusOK, map[string]string{
 		"url": imageURL,
 	})
 }
@@ -444,17 +509,17 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		utils.SendError(w, http.StatusUnauthorized, "Unauthorized!")
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized!")
 		return
 	}
 	if userId == "" {
-		utils.SendError(w, http.StatusUnauthorized, "Unauthorized!")
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized!")
 		return
 	}
 
 	rows, err := fh.DB.Query(`SELECT id, original_filename, mime_type, upload_date, width, height FROM images WHERE user_id = $1 AND deleted = FALSE`, userId)
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Query failed!")
+		utils.RespondError(w, http.StatusInternalServerError, "Query failed!")
 		return
 	}
 	defer rows.Close()
@@ -473,7 +538,7 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 		)
 		if err != nil {
 			fmt.Println(err)
-			utils.SendError(w, http.StatusInternalServerError, "Scan failed!")
+			utils.RespondError(w, http.StatusInternalServerError, "Scan failed!")
 			return
 		}
 
@@ -481,7 +546,7 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = rows.Err(); err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Error reading rows!")
+		utils.RespondError(w, http.StatusInternalServerError, "Error reading rows!")
 		return
 	}
 
@@ -495,220 +560,389 @@ func (fh *FileHandler) GetAllUserFiles(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Failed to encode response: %v", err)
-		utils.SendError2(w, "Failed to send response", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to send response")
 	}
 
 }
 
-func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseMultipartForm(10 << 20)
-	if err != nil {
-		fmt.Println("ParseMultipartForm error:", err)
-		utils.SendError(w, http.StatusBadRequest, "Could not parse multipart form")
+func (fh *FileHandler) enforceDailyImageLimit(ctx context.Context, userID string, fileSizeBytes int64) error {
+	sizeMB := float64(fileSizeBytes) / (1024 * 1024)
+	key := userID + "file-size-limit"
 
+	current, err := fh.Redis.Get(ctx, key).Float64()
+	if err != nil && err != redis.Nil {
+		return fmt.Errorf("failed to check daily limit: %w", err)
+	}
+
+	if current+sizeMB > fileSizeLimitPerDayInMb {
+		return fmt.Errorf("daily upload limit reached (%.1f/%.0f MB)", current, float64(fileSizeLimitPerDayInMb))
+	}
+
+	if err := fh.Redis.Set(ctx, key, current+sizeMB, 24*time.Hour).Err(); err != nil {
+		return fmt.Errorf("failed to update daily limit: %w", err)
+	}
+
+	return nil
+}
+
+func (fh *FileHandler) uploadImageToS3(ctx context.Context, userID string, fileHeader *multipart.FileHeader) (models.UploadGoRoutines, error) {
+	var upload models.UploadGoRoutines
+
+	if fileHeader == nil {
+		return upload, errors.New("file header is required")
+	}
+
+	if fileHeader.Filename == "" {
+		return upload, errors.New("filename is required")
+	}
+
+	if err := fh.enforceDailyImageLimit(ctx, userID, fileHeader.Size); err != nil {
+		return upload, err
+	}
+
+	if err := validateContentType(fileHeader.Header.Get("Content-Type")); err != nil {
+		return upload, err
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return upload, fmt.Errorf("unable to open file: %w", err)
+	}
+	defer file.Close()
+
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		return upload, fmt.Errorf("unable to read file: %w", err)
+	}
+
+	key := fmt.Sprintf("uploads/%d_%s_%s", time.Now().UnixNano(), userID, fileHeader.Filename)
+
+	presignedURL, err := fh.CreatePresignedUploadRequest(fileHeader.Filename, fileHeader.Header.Get("Content-Type"), key)
+	if err != nil {
+		return upload, fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", *presignedURL, bytes.NewReader(fileBytes))
+	if err != nil {
+		return upload, fmt.Errorf("failed to create upload request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", fileHeader.Header.Get("Content-Type"))
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return upload, fmt.Errorf("failed to upload to storage: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return upload, fmt.Errorf("storage upload failed with status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	upload.Url = fmt.Sprintf("https://%s.s3.amazonaws.com/%s", fh.S3Bucket, key)
+	upload.OriginalFilename = fileHeader.Filename
+	upload.MimeType = fileHeader.Header.Get("Content-Type")
+	upload.S3Key = key
+	upload.FileSize = fileHeader.Size
+	upload.CDNurl = fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
+	upload.Key = key
+
+	return upload, nil
+}
+
+func (fh *FileHandler) uploadVideoToS3(ctx context.Context, userID string, fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader == nil {
+		return "", errors.New("file header is required")
+	}
+
+	if fileHeader.Filename == "" {
+		return "", errors.New("filename is required")
+	}
+
+	if fileHeader.Size > maxVideoUploadSizeBytes {
+		return "", fmt.Errorf("file size limit is %dMB", maxVideoUploadSizeBytes/(1<<20))
+	}
+
+	if err := validateVideoContentType(fileHeader.Header.Get("Content-Type")); err != nil {
+		return "", err
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("failed to open uploaded file: %w", err)
+	}
+	defer file.Close()
+
+	key := fmt.Sprintf("media/video/%s/%d_%s", userID, time.Now().UnixNano(), fileHeader.Filename)
+
+	_, err = fh.S3Uploader.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(fh.S3Bucket),
+		Key:    aws.String(key),
+		Body:   file,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s.s3.amazonaws.com/%s", fh.S3Bucket, key)
+	id, err := fh.saveMediaToDB(userID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, url)
+	if err != nil {
+		return "", fmt.Errorf("failed to persist media metadata: %w", err)
+	}
+
+	return fh.buildMediaStreamURL(id), nil
+}
+
+func (fh *FileHandler) uploadAudioToS3(ctx context.Context, userID string, fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader == nil {
+		return "", errors.New("file header is required")
+	}
+
+	if fileHeader.Filename == "" {
+		return "", errors.New("filename is required")
+	}
+
+	if fileHeader.Size > maxAudioUploadSizeBytes {
+		return "", fmt.Errorf("file size limit is %dMB", maxAudioUploadSizeBytes/(1<<20))
+	}
+
+	if err := validateAudioContentType(fileHeader.Header.Get("Content-Type")); err != nil {
+		return "", err
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("failed to open uploaded file: %w", err)
+	}
+	defer file.Close()
+
+	key := fmt.Sprintf("media/audio/%s/%d_%s", userID, time.Now().UnixNano(), fileHeader.Filename)
+
+	_, err = fh.S3Uploader.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(fh.S3Bucket),
+		Key:    aws.String(key),
+		Body:   file,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	url := fmt.Sprintf("https://%s.s3.amazonaws.com/%s", fh.S3Bucket, key)
+	id, err := fh.saveMediaToDB(userID, key, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), fileHeader.Size, url)
+	if err != nil {
+		return "", fmt.Errorf("failed to persist media metadata: %w", err)
+	}
+
+	return fh.buildMediaStreamURL(id), nil
+}
+
+func (fh *FileHandler) buildMediaStreamURL(id uuid.UUID) string {
+	baseURL := os.Getenv("BACKEND_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:8080"
+	}
+	return fmt.Sprintf("%s/api/video/watch?vid=%s", baseURL, id.String())
+}
+
+func (fh *FileHandler) UploadMedia(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxMediaFormMemory); err != nil {
+		utils.RespondError(w, http.StatusBadRequest, "Could not parse multipart form")
 		return
 	}
 
 	files := r.MultipartForm.File["file"]
-
 	if len(files) == 0 {
-		utils.SendError(w, http.StatusBadRequest, "No files uploaded")
-
+		utils.RespondError(w, http.StatusBadRequest, "No file provided. Use form field 'file'")
 		return
 	}
 
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
-
-	if !ok {
-		log.Printf("Error: User ID not found in context")
-		utils.SendError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
+	if !ok || userID == "" {
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: user id missing")
 		return
 	}
 
-	row := fh.DB.QueryRow("SELECT username, email, public_key, secret_key ,account_type FROM users WHERE uuid = $1", &userID)
-
-	var user models.UserForFileUpload
-
-	err = row.Scan(
-		&user.Username,
-		&user.Email,
-		&user.PublicKey,
-		&user.SecretKey,
-		&user.AccountType,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			log.Printf("User not found for ID: %s", userID)
-			utils.SendError(w, http.StatusNotFound, "User not found")
-		} else {
-			log.Printf("Database error while fetching user info for ID %s: %v", userID, err)
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error: Failed to retrieve user data")
-
-		}
-		return
-	}
-
-	success := make(chan models.UploadGoRoutines, len(files))
-	errChn := make(chan error, len(files))
-
-	var wg sync.WaitGroup
+	var uploaded []mediaUploadResponse
+	var failed []mediaUploadResponse
+	var pendingImages []models.UploadGoRoutines
+	var pendingImageResults []mediaUploadResponse
 
 	for _, fileHeader := range files {
-		wg.Add(1)
-		go func(f *multipart.FileHeader) {
-			defer wg.Done()
-			if f.Filename == "" {
-				errChn <- fmt.Errorf("filename not defined %s", f.Filename)
-				return
-			}
+		result := mediaUploadResponse{
+			FileName: fileHeader.Filename,
+		}
 
-			sizeInBytes := fileHeader.Size
-			sizeInMB := float64(sizeInBytes) / (1024 * 1024)
-
-			res := fh.Redis.Get(r.Context(), userID+"file-size-limit")
-
-			val, err := res.Float64()
-			fmt.Println(err)
-			if err != nil {
-				if err == redis.Nil {
-					errChn <- fmt.Errorf("daily limit reached %s", f.Filename)
-					val = sizeInMB
-				} else {
-					val = sizeInMB
-					errChn <- fmt.Errorf("internal server error %s", f.Filename)
-				}
-
-			}
-
-			fmt.Println(val)
-
-			if val > fileSizeLimitPerDayInMb {
-				errChn <- fmt.Errorf("daily limit reached %s", f.Filename)
-				return
-			}
-
-			fh.Redis.Set(r.Context(), userID+"file-size-limit", val+sizeInMB, 24*time.Hour)
-
-			err = validateContentType(f.Header.Get("Content-Type"))
-
-			if err != nil {
-				errChn <- fmt.Errorf("invalid file type %s", f.Filename)
-				return
-			}
-
-			file, err := f.Open()
-
-			if err != nil {
-				errChn <- fmt.Errorf("unable to open file %s", f.Filename)
-				return
-			}
-
-			defer file.Close()
-
-			fileBytes, err := io.ReadAll(file)
-			if err != nil {
-				errChn <- fmt.Errorf("unable to read file %s", f.Filename)
-				return
-			}
-
-			key := "uploads/" + strconv.FormatInt(time.Now().UnixNano(), 10) + "_" + "_" + f.Filename
-
-			url, err := fh.CreatePresignedUploadRequest(f.Filename, f.Header.Get("Content-Type"), key)
-
-			if err != nil {
-				fmt.Println(err)
-				errChn <- fmt.Errorf("internal server error with file %s", f.Filename)
-				return
-			}
-
-			reqHttp, err := http.NewRequest("PUT", *url, bytes.NewReader(fileBytes))
-
-			if err != nil {
-				fmt.Println(err)
-
-				errChn <- fmt.Errorf("internal server error with file %s", f.Filename)
-				return
-			}
-
-			reqHttp.Header.Set("Content-Type", f.Header.
-				Get("Content-Type"))
-
-			client := &http.Client{}
-
-			resp, err := client.Do(reqHttp)
-
-			if err != nil {
-				fmt.Println(err)
-
-				errChn <- fmt.Errorf("unable to upload file %s", f.Filename)
-				return
-			}
-
-			defer resp.Body.Close()
-
-			if resp.StatusCode != 200 {
-				fmt.Println("err")
-
-				errChn <- fmt.Errorf("internal server error %s", f.Filename)
-				return
-			}
-
-			fileURL := "https://" + fh.S3Bucket + ".s3.amazonaws.com/" + key
-			cdnUrl := fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
-			success <- models.UploadGoRoutines{Url: fileURL, OriginalFilename: f.Filename, MimeType: f.Header.Get("Content-Type"), Width: 0, Height: 0, S3Key: key, FileSize: f.Size, CDNurl: cdnUrl}
-
-		}(fileHeader)
-
-	}
-	wg.Wait()
-	close(success)
-	close(errChn)
-
-	var uploaded []models.UploadGoRoutines
-
-	var uploadedFiles []string
-	for imgSuccess := range success {
-		uploadedFiles = append(uploadedFiles, imgSuccess.CDNurl)
-		uploaded = append(uploaded, models.UploadGoRoutines{
-			Url:              imgSuccess.Url,
-			OriginalFilename: imgSuccess.OriginalFilename,
-			MimeType:         imgSuccess.MimeType,
-			Width:            imgSuccess.Width,
-			Height:           imgSuccess.Height,
-			S3Key:            imgSuccess.S3Key,
-			FileSize:         imgSuccess.FileSize,
-			CDNurl:           imgSuccess.CDNurl,
-		})
-	}
-
-	err = fh.SaveUploadedImages(uploaded, userID)
-
-	if err != nil {
-		fmt.Println(err)
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
-		return
-	}
-
-	var errorMessages []string
-	for err := range errChn {
+		mediaKind, err := classifyMedia(fileHeader.Header.Get("Content-Type"))
 		if err != nil {
-			errorMessages = append(errorMessages, err.Error())
+			result.Error = err.Error()
+			failed = append(failed, result)
+			continue
+		}
+		result.MediaType = string(mediaKind)
+
+		switch mediaKind {
+		case mediaTypeImage:
+			upload, err := fh.uploadImageToS3(r.Context(), userID, fileHeader)
+			if err != nil {
+				result.Error = err.Error()
+				failed = append(failed, result)
+				continue
+			}
+			pendingImages = append(pendingImages, upload)
+			result.URL = upload.Url
+			result.CDNURL = upload.CDNurl
+			pendingImageResults = append(pendingImageResults, result)
+		case mediaTypeVideo:
+			url, err := fh.uploadVideoToS3(r.Context(), userID, fileHeader)
+			if err != nil {
+				result.Error = err.Error()
+				failed = append(failed, result)
+				continue
+			}
+			result.URL = url
+			uploaded = append(uploaded, result)
+		case mediaTypeAudio:
+			url, err := fh.uploadAudioToS3(r.Context(), userID, fileHeader)
+			if err != nil {
+				result.Error = err.Error()
+				failed = append(failed, result)
+				continue
+			}
+			result.URL = url
+			uploaded = append(uploaded, result)
+		default:
+			result.Error = "unsupported media type"
+			failed = append(failed, result)
 		}
 	}
-	response := map[string]any{
-		"uploaded_files":  uploadedFiles,
-		"failed_file_err": errorMessages,
+
+	if len(pendingImages) > 0 {
+		if err := fh.SaveUploadedImages(pendingImages, userID); err != nil {
+			for _, res := range pendingImageResults {
+				res.Error = fmt.Sprintf("uploaded to storage but failed to save metadata: %v", err)
+				res.URL = ""
+				res.CDNURL = ""
+				failed = append(failed, res)
+			}
+		} else {
+			uploaded = append(uploaded, pendingImageResults...)
+		}
 	}
 
-	w.Header().Set("Content-type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	status := http.StatusOK
+	if len(uploaded) == 0 {
+		status = http.StatusBadRequest
+	}
 
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server errors")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"uploaded": uploaded,
+		"failed":   failed,
+	}); err != nil {
+		log.Printf("Failed to encode upload response: %v", err)
+	}
+}
+
+func (fh *FileHandler) UploadFilesWithGoRoutines(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxMediaFormMemory); err != nil {
+		utils.RespondError(w, http.StatusBadRequest, "Could not parse multipart form")
 		return
 	}
 
+	files := r.MultipartForm.File["file"]
+	if len(files) == 0 {
+		utils.RespondError(w, http.StatusBadRequest, "No files uploaded. Use form field 'file'.")
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok || userID == "" {
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized: User ID not provided")
+		return
+	}
+
+	var uploaded []mediaUploadResponse
+	var failed []mediaUploadResponse
+	var pendingImages []models.UploadGoRoutines
+	var pendingImageResults []mediaUploadResponse
+
+	for _, fileHeader := range files {
+		result := mediaUploadResponse{
+			FileName: fileHeader.Filename,
+		}
+
+		mediaKind, err := classifyMedia(fileHeader.Header.Get("Content-Type"))
+		if err != nil {
+			result.Error = err.Error()
+			failed = append(failed, result)
+			continue
+		}
+
+		result.MediaType = string(mediaKind)
+
+		switch mediaKind {
+		case mediaTypeImage:
+			upload, err := fh.uploadImageToS3(r.Context(), userID, fileHeader)
+			if err != nil {
+				result.Error = err.Error()
+				failed = append(failed, result)
+				continue
+			}
+			pendingImages = append(pendingImages, upload)
+			result.URL = upload.Url
+			result.CDNURL = upload.CDNurl
+			pendingImageResults = append(pendingImageResults, result)
+		case mediaTypeVideo:
+			url, err := fh.uploadVideoToS3(r.Context(), userID, fileHeader)
+			if err != nil {
+				result.Error = err.Error()
+				failed = append(failed, result)
+				continue
+			}
+			result.URL = url
+			uploaded = append(uploaded, result)
+		case mediaTypeAudio:
+			url, err := fh.uploadAudioToS3(r.Context(), userID, fileHeader)
+			if err != nil {
+				result.Error = err.Error()
+				failed = append(failed, result)
+				continue
+			}
+			result.URL = url
+			uploaded = append(uploaded, result)
+		default:
+			result.Error = "unsupported media type"
+			failed = append(failed, result)
+		}
+	}
+
+	if len(pendingImages) > 0 {
+		if err := fh.SaveUploadedImages(pendingImages, userID); err != nil {
+			for _, res := range pendingImageResults {
+				res.Error = fmt.Sprintf("uploaded to storage but failed to save metadata: %v", err)
+				res.URL = ""
+				res.CDNURL = ""
+				failed = append(failed, res)
+			}
+		} else {
+			uploaded = append(uploaded, pendingImageResults...)
+		}
+	}
+
+	status := http.StatusOK
+	if len(uploaded) == 0 {
+		status = http.StatusBadRequest
+	} else if len(failed) > 0 {
+		status = http.StatusPartialContent
+	}
+
+	utils.RespondSuccess(w, status, map[string]any{
+		"uploaded": uploaded,
+		"failed":   failed,
+	})
 }
 
 func (fh *FileHandler) SaveUploadedImages(images []models.UploadGoRoutines, userID string) error {
@@ -749,14 +983,14 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 4 {
-		utils.SendError2(w, "Invalid URL structure", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL structure")
 		return
 	}
 
 	photoID := parsedURL[4]
 
 	if photoID == "" {
-		utils.SendError2(w, "Invalid id", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid id")
 		return
 	}
 
@@ -770,9 +1004,9 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			utils.SendError2(w, "Invalid image id", http.StatusBadRequest)
+			utils.RespondError(w, http.StatusBadRequest, "Invalid image id")
 		} else {
-			utils.SendError2(w, "Image not found", http.StatusNotFound)
+			utils.RespondError(w, http.StatusNotFound, "Image not found")
 
 		}
 		return
@@ -781,7 +1015,7 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 	resp, err := http.Get(url)
 
 	if err != nil || resp.StatusCode != http.StatusOK {
-		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
+		utils.RespondError(w, http.StatusBadGateway, "Failed to fetch image")
 		return
 	}
 
@@ -795,13 +1029,13 @@ func (fh *FileHandler) ServeFileWithIDForUI(w http.ResponseWriter, r *http.Reque
 func (fh *FileHandler) ServeFileWithIDForThirdParty(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
 	if len(parsedURL) < 5 {
-		utils.SendError2(w, "Invalid URL structure", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL structure")
 		return
 	}
 
 	photoID := parsedURL[4]
 	if photoID == "" {
-		utils.SendError2(w, "Invalid id", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid id")
 		return
 	}
 
@@ -854,10 +1088,10 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 	err := row.Scan(&url)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			utils.SendError2(w, "Image not found", http.StatusNotFound)
+			utils.RespondError(w, http.StatusNotFound, "Image not found")
 		} else {
 			log.Printf("Database error for image %s: %v", photoID, err)
-			utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		}
 		return
 	}
@@ -869,14 +1103,14 @@ func (fh *FileHandler) serveFromSource(w http.ResponseWriter, r *http.Request, p
 	resp, err := client.Get(url)
 	if err != nil {
 		log.Printf("Error fetching image from %s: %v", url, err)
-		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
+		utils.RespondError(w, http.StatusBadGateway, "Failed to fetch image")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Non-200 status code %d when fetching %s", resp.StatusCode, url)
-		utils.SendError2(w, "Failed to fetch image", http.StatusBadGateway)
+		utils.RespondError(w, http.StatusBadGateway, "Failed to fetch image")
 		return
 	}
 
@@ -938,7 +1172,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("iid")
 
 	if id == "" {
-		utils.SendError(w, http.StatusBadRequest, "Missing 'key' parameter")
+		utils.RespondError(w, http.StatusBadRequest, "Missing 'key' parameter")
 		return
 	}
 
@@ -947,7 +1181,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	err := fh.DB.QueryRow(`SELECT s3_key FROM images WHERE id = $1 AND deleted = FALSE`, id).Scan(&s3key)
 
 	if err != nil {
-		utils.SendError(w, http.StatusNotFound, "Not found!")
+		utils.RespondError(w, http.StatusNotFound, "Not found!")
 		return
 	}
 
@@ -956,7 +1190,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		Key:    aws.String(s3key),
 	})
 	if err != nil {
-		utils.SendError2(w, "Failed to get object from S3: "+err.Error(), http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to get object from S3: "+err.Error())
 		return
 	}
 	defer output.Body.Close()
@@ -968,7 +1202,7 @@ func (fh *FileHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(w, output.Body)
 	if err != nil {
-		utils.SendError2(w, "Failed to stream file", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to stream file")
 		return
 	}
 }
@@ -1002,39 +1236,39 @@ func (fh *FileHandler) DeleteImages(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			utils.SendError(w, http.StatusNotFound, "Not found")
+			utils.RespondError(w, http.StatusNotFound, "Not found")
 		} else {
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		}
 		return
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Could not determine deletion result")
+		utils.RespondError(w, http.StatusInternalServerError, "Could not determine deletion result")
 		return
 	}
 
 	if rowsAffected == 0 {
-		utils.SendError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
+		utils.RespondError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK, "Image deleted successfully")
+	utils.RespondSuccess(w, http.StatusOK, "Image deleted successfully")
 
 	go removeImageFromRedis(imageID, fh.Redis)
 }
 
-func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.ResponseWriter, r *http.Request) {
+func (fh *FileHandler) ListSoftDeletedImagesByUser(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		utils.RespondError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
 
 	if userID == "" {
-		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		utils.RespondError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
 
@@ -1044,7 +1278,7 @@ func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.Respo
 	defer rows.Close()
 
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
@@ -1052,7 +1286,7 @@ func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.Respo
 		var id string
 
 		if err := rows.Scan(&id); err != nil {
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
@@ -1066,7 +1300,7 @@ func (fh *FileHandler) GetAllImagesWithUserIDWhichAreDeletedEqFalse(w http.Respo
 	w.Header().Set("Content-Type", "application/json")
 
 	if err := json.NewEncoder(w).Encode(&res); err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Unable to encode to json.")
+		utils.RespondError(w, http.StatusInternalServerError, "Unable to encode to json.")
 		return
 	}
 
@@ -1077,19 +1311,19 @@ func (fh *FileHandler) RecoverDeletedImage(w http.ResponseWriter, r *http.Reques
 	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
 
 	if !ok {
-		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		utils.RespondError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
 
 	if userID == "" {
-		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		utils.RespondError(w, http.StatusUnauthorized, "Please login to perform this action.")
 		return
 	}
 
 	id := r.URL.Query().Get("id")
 
 	if id == "" {
-		utils.SendError(w, http.StatusBadRequest, "id is required")
+		utils.RespondError(w, http.StatusBadRequest, "id is required")
 		return
 	}
 
@@ -1097,109 +1331,31 @@ func (fh *FileHandler) RecoverDeletedImage(w http.ResponseWriter, r *http.Reques
 
 	fmt.Println(err)
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	rowsAffected, err := result.RowsAffected()
 
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 
 	if rowsAffected == 0 {
-		utils.SendError(w, http.StatusUnauthorized, "No image found")
+		utils.RespondError(w, http.StatusUnauthorized, "No image found")
 		return
 	}
 
-	utils.SendJSON(w, http.StatusOK)
+	utils.RespondSuccess(w, http.StatusOK)
 
 }
 
-func (fh *FileHandler) DeleteDeletedImagesPermanently(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
-
-	if !ok {
-		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
-		return
-	}
-
-	if userID == "" {
-		utils.SendError(w, http.StatusUnauthorized, "Please login to perform this action.")
-		return
-	}
-
-	id := r.URL.Query().Get("id")
-
-	if id == "" {
-		utils.SendError(w, http.StatusBadRequest, "id is required")
-		return
-	}
-
-	var key string
-
-	err := fh.DB.QueryRow(
-		`SELECT s3_key FROM images WHERE id = $1 AND user_id = $2`,
-		id, userID,
-	).Scan(&key)
-
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			utils.SendError(w, http.StatusNotFound, "Image not found")
-		} else {
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
-		}
-		return
-	}
-
-	bucket := os.Getenv("AWS_BUCKET_NAME")
-	if bucket == "" {
-		log.Println("AWS_BUCKET_NAME environment variable is not set")
-		utils.SendError(w, http.StatusInternalServerError, "Missing bucket name")
-		return
-	}
-
-	_, err = fh.S3Client.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-
-	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Failed to delete from S3")
-		return
-	}
-
-	result, err := fh.DB.Exec(`DELETE FROM images WHERE id = $1 AND user_id = $2`, id, userID)
-
-	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
-		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-
-	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Internal server error")
-		return
-	}
-
-	if rowsAffected == 0 {
-		utils.SendError(w, http.StatusUnauthorized, "No image found")
-		return
-	}
-
-	utils.SendJSON(w, http.StatusOK)
-
-	go removeImageFromRedis(id, fh.Redis)
-
-}
-
-func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w http.ResponseWriter, r *http.Request) {
+func (fh *FileHandler) HandleImageResizeRequestForUser(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 4 {
-		utils.SendError2(w, "Invalid URL", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL")
 		return
 	}
 
@@ -1215,7 +1371,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 	heightInt, errH := strconv.Atoi(heightStr)
 
 	if err != nil || errH != nil {
-		utils.SendError2(w, "Width and height are required and must be integers", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Width and height are required and must be integers")
 		return
 	}
 
@@ -1252,15 +1408,15 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 	if err != nil {
 		fmt.Println(err)
 		if err == sql.ErrNoRows {
-			utils.SendError2(w, "Image not found", http.StatusNotFound)
+			utils.RespondError(w, http.StatusNotFound, "Image not found")
 		} else {
-			utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		}
 		return
 	}
 
 	if widthInt == int(image.Width) && heightInt == int(image.Height) {
-		utils.SendJSON(w, http.StatusOK, map[string]string{
+		utils.RespondSuccess(w, http.StatusOK, map[string]string{
 			"id":  image.ID.String(),
 			"url": image.URL,
 		})
@@ -1269,14 +1425,14 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 
 	str, key, err := LamdaMagicHere(image.S3Key, widthStr, heightStr)
 	if err != nil {
-		utils.SendError2(w, "Image resize failed", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Image resize failed")
 		return
 	}
 
 	tx, err := fh.DB.Begin()
 	if err != nil {
 		log.Println("Failed to start transaction:", err)
-		utils.SendError2(w, "Server error", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Server error")
 		return
 	}
 	defer func() {
@@ -1308,7 +1464,7 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 
 	if err != nil {
 		log.Println("Image insert failed:", err)
-		utils.SendError2(w, "Failed to insert image", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to insert image")
 		return
 	}
 
@@ -1325,34 +1481,112 @@ func (fh *FileHandler) GetFileEditStoreInS3ThenInPsqlWithWidthAndSizeForUI(w htt
 `, userID)
 	if err != nil {
 		log.Println("Failed to decrement edit_api_calls:", err)
-		utils.SendError2(w, "Failed to update, API quota limit reached", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to update, API quota limit reached")
 		return
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
 		log.Println("Error checking quota update:", err)
-		utils.SendError2(w, "Internal server error", http.StatusInternalServerError)
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
 	if rowsAffected == 0 {
-		utils.SendError2(w, "Insufficient quota", http.StatusForbidden)
+		utils.RespondError(w, http.StatusForbidden, "Insufficient quota")
 		return
 	}
 
 	url := os.Getenv("BACKEND_URL")
 	imageURL := fmt.Sprintf("%s/api/file/get-file/%s", url, imageID)
 
-	utils.SendJSONToThirdParty(w, http.StatusOK, map[string]string{
+	utils.RespondThirdParty(w, http.StatusOK, map[string]string{
 		"url": imageURL,
 	})
+}
+
+func (fh *FileHandler) HardDeleteSoftDeletedImage(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if !ok {
+		utils.RespondError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	if userID == "" {
+		utils.RespondError(w, http.StatusUnauthorized, "Please login to perform this action.")
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+
+	if id == "" {
+		utils.RespondError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+
+	var key string
+
+	err := fh.DB.QueryRow(
+		`SELECT s3_key FROM images WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	).Scan(&key)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			utils.RespondError(w, http.StatusNotFound, "Image not found")
+		} else {
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	bucket := os.Getenv("AWS_BUCKET_NAME")
+	if bucket == "" {
+		log.Println("AWS_BUCKET_NAME environment variable is not set")
+		utils.RespondError(w, http.StatusInternalServerError, "Missing bucket name")
+		return
+	}
+
+	_, err = fh.S3Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to delete from S3")
+		return
+	}
+
+	result, err := fh.DB.Exec(`DELETE FROM images WHERE id = $1 AND user_id = $2`, id, userID)
+
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if rowsAffected == 0 {
+		utils.RespondError(w, http.StatusUnauthorized, "No image found")
+		return
+	}
+
+	utils.RespondSuccess(w, http.StatusOK)
+
+	go removeImageFromRedis(id, fh.Redis)
+
 }
 
 func (fh *FileHandler) DeleteImageForThirdParty(w http.ResponseWriter, r *http.Request) {
 	parsedURL := strings.Split(r.URL.Path, "/")
 
 	if len(parsedURL) < 7 {
-		utils.SendError2(w, "Invalid URL", http.StatusBadRequest)
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL")
 		return
 	}
 	imageID := parsedURL[4]
@@ -1363,7 +1597,7 @@ func (fh *FileHandler) DeleteImageForThirdParty(w http.ResponseWriter, r *http.R
 	user_id, err := fh.GetUserIdFromSecretKeyAndPublicKey(publicKey, secretKey)
 
 	if err != nil {
-		utils.SendError(w, http.StatusUnauthorized, "You are  unauthorized to delete this image!")
+		utils.RespondError(w, http.StatusUnauthorized, "You are  unauthorized to delete this image!")
 		return
 	}
 
@@ -1374,21 +1608,21 @@ func (fh *FileHandler) DeleteImageForThirdParty(w http.ResponseWriter, r *http.R
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			utils.SendError(w, http.StatusNotFound, "Not found")
+			utils.RespondError(w, http.StatusNotFound, "Not found")
 		} else {
-			utils.SendError(w, http.StatusInternalServerError, "Internal server error")
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
 		}
 		return
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		utils.SendError(w, http.StatusInternalServerError, "Could not determine deletion result")
+		utils.RespondError(w, http.StatusInternalServerError, "Could not determine deletion result")
 		return
 	}
 
 	if rowsAffected == 0 {
-		utils.SendError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
+		utils.RespondError(w, http.StatusNotFound, "No image deleted (maybe wrong ID or unauthorized)")
 		return
 	}
 
@@ -1412,4 +1646,631 @@ func (fh *FileHandler) GetUserIdFromSecretKeyAndPublicKey(pubKey, secKey string)
 	}
 
 	return id, nil
+}
+
+// Video Handling Methods
+
+func (fh *FileHandler) VideoUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxMediaFormMemory); err != nil {
+		utils.RespondError(w, http.StatusBadRequest, "Could not parse multipart form")
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok || userID == "" {
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	files := r.MultipartForm.File["video"]
+	if len(files) == 0 {
+		utils.RespondError(w, http.StatusBadRequest, "No video file provided")
+		return
+	}
+
+	type uploadResult struct {
+		Filename string
+		URL      string
+		Error    error
+	}
+
+	resChan := make(chan uploadResult, len(files))
+	var wg sync.WaitGroup
+
+	for _, fhFile := range files {
+		wg.Add(1)
+
+		go func(fhFile *multipart.FileHeader) {
+			defer wg.Done()
+
+			url, err := fh.uploadVideoToS3(r.Context(), userID, fhFile)
+			if err != nil {
+				resChan <- uploadResult{Filename: fhFile.Filename, Error: err}
+				return
+			}
+
+			resChan <- uploadResult{Filename: fhFile.Filename, URL: url}
+		}(fhFile)
+	}
+
+	wg.Wait()
+	close(resChan)
+
+	var successURL []string
+	var errMsg []string
+
+	for res := range resChan {
+		if res.Error != nil {
+			errMsg = append(errMsg, res.Error.Error())
+		} else {
+			successURL = append(successURL, res.URL)
+		}
+	}
+
+	if len(errMsg) > 0 {
+		if len(successURL) == 0 {
+			utils.RespondError(w, http.StatusBadRequest, fmt.Sprintf("Errors: %v", errMsg))
+			return
+		}
+
+		w.Header().Set("Content-type", "application/json")
+		w.WriteHeader(http.StatusPartialContent)
+		response := map[string]any{
+			"success": successURL,
+			"error":   errMsg,
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+		}
+		return
+	}
+
+	w.Header().Set("Content-type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]any{
+		"success": successURL,
+		"error":   errMsg,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+	}
+}
+
+func (fh *FileHandler) HandleMediaStreamingRequest(w http.ResponseWriter, r *http.Request) {
+	vid := r.URL.Query().Get("vid")
+	if vid == "" {
+		utils.RespondError(w, http.StatusBadRequest, "Invalid Id")
+		return
+	}
+
+	s3Key, err := fh.getMediaS3Key(vid)
+	if err != nil {
+		utils.RespondError(w, http.StatusNotFound, "Video not found")
+		return
+	}
+
+	rangeHeader := r.Header.Get("Range")
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(fh.S3Bucket),
+		Key:    aws.String(s3Key),
+	}
+	if rangeHeader != "" {
+		input.Range = aws.String(rangeHeader)
+	}
+
+	resp, err := fh.S3Client.GetObject(input)
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Error fetching video")
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.ContentLength != nil {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", *resp.ContentLength))
+	}
+	if resp.ContentType != nil {
+		w.Header().Set("Content-Type", *resp.ContentType)
+	}
+	if resp.ContentRange != nil {
+		w.Header().Set("Content-Range", *resp.ContentRange)
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		return
+	}
+}
+
+func (fh *FileHandler) DeleteVideoWithUserID(w http.ResponseWriter, r *http.Request) {
+	vid := r.URL.Query().Get("vid")
+	if vid == "" {
+		utils.RespondError(w, http.StatusBadRequest, "Invalid Id")
+		return
+	}
+
+	userId, ok := r.Context().Value(middleware.UserIDContextKey).(string)
+	if !ok || userId == "" {
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	err := fh.deleteMediaFromDB(vid, userId)
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.RespondString(w, http.StatusOK, "video deleted successfully")
+}
+
+func (fh *FileHandler) UploadVideoForThirdParty(w http.ResponseWriter, r *http.Request) {
+	parsedUrl := strings.Split(r.URL.Path, "/")
+	if len(parsedUrl) < 7 {
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL format")
+		return
+	}
+	publicKey := parsedUrl[4]
+	secretKey := parsedUrl[6]
+
+	var userID uuid.UUID
+	err := fh.DB.QueryRow(`SELECT uuid FROM users WHERE public_key = $1 AND secret_key = $2`, publicKey, secretKey).Scan(&userID)
+	if err != nil {
+		utils.RespondError(w, http.StatusUnauthorized, "Invalid keys")
+		return
+	}
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		utils.RespondError(w, http.StatusBadRequest, "Could not parse multipart form")
+		return
+	}
+
+	files := r.MultipartForm.File["video"]
+	if len(files) == 0 {
+		utils.RespondError(w, http.StatusBadRequest, "No video file provided")
+		return
+	}
+
+	fileHeader := files[0]
+
+	streamURL, err := fh.uploadVideoToS3(r.Context(), userID.String(), fileHeader)
+	if err != nil {
+		utils.RespondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	response := map[string]any{
+		"success": streamURL,
+		"error":   "",
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to encode response: "+err.Error())
+	}
+}
+
+func (fh *FileHandler) DeleteVideoForThirdParty(w http.ResponseWriter, r *http.Request) {
+	parsedUrl := strings.Split(r.URL.Path, "/")
+	if len(parsedUrl) < 8 {
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL format")
+		return
+	}
+
+	publicKey := parsedUrl[4]
+	secretKey := parsedUrl[6]
+	vid := parsedUrl[7]
+
+	var userID uuid.UUID
+	err := fh.DB.QueryRow(`SELECT uuid FROM users WHERE public_key = $1 AND secret_key = $2`, publicKey, secretKey).Scan(&userID)
+	if err != nil {
+		utils.RespondError(w, http.StatusUnauthorized, "Invalid keys")
+		return
+	}
+
+	err = fh.deleteMediaFromDB(vid, userID.String())
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.RespondSuccess(w, http.StatusOK, "video deleted successfully")
+}
+
+// UploadMediaForThirdParty handles media uploads (image/video/audio) for third-party integrations
+func (fh *FileHandler) UploadMediaForThirdParty(w http.ResponseWriter, r *http.Request) {
+	parsedUrl := strings.Split(r.URL.Path, "/")
+	if len(parsedUrl) < 7 {
+		utils.RespondError(w, http.StatusBadRequest, "Invalid URL format")
+		return
+	}
+	publicKey := parsedUrl[4]
+	secretKey := parsedUrl[6]
+
+	// Authenticate user and decrement API calls
+	row := fh.DB.QueryRow(`WITH user_data AS (
+		SELECT uuid, public_key, secret_key, username, email
+		FROM users
+		WHERE public_key = $1
+	),
+	updated AS (
+		UPDATE users
+		SET post_api_calls = post_api_calls - 0
+		WHERE public_key = $1 AND post_api_calls = 0
+		RETURNING post_api_calls
+	)
+	SELECT u.uuid, u.public_key, u.secret_key, u.username, u.email, up.post_api_calls
+	FROM user_data u
+	JOIN updated up ON true;
+	`, publicKey)
+
+	var user models.SecretKeyUploadUser
+	err := row.Scan(
+		&user.ID,
+		&user.PublicKey,
+		&user.SecretKey,
+		&user.Username,
+		&user.Email,
+		&user.PostAPICalls,
+	)
+
+	if user.SecretKey != "" && secretKey != user.SecretKey {
+		utils.RespondError(w, http.StatusUnauthorized, "Invalid public or secret key")
+		return
+	}
+	if err != nil {
+		utils.RespondError(w, http.StatusUnauthorized, "Post req limit reached for this month")
+		return
+	}
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(maxMediaFormMemory); err != nil {
+		utils.RespondError(w, http.StatusBadRequest, "Could not parse multipart form")
+		return
+	}
+
+	// Get file from form
+	file, fileHeader, err := r.FormFile("file")
+	if err != nil {
+		utils.RespondError(w, http.StatusBadRequest, "File not provided")
+		return
+	}
+	defer file.Close()
+
+	if fileHeader.Filename == "" {
+		utils.RespondError(w, http.StatusBadRequest, "Filename is required")
+		return
+	}
+
+	contentType := fileHeader.Header.Get("Content-Type")
+
+	// Classify media type
+	mediaType, err := classifyMedia(contentType)
+	if err != nil {
+		utils.RespondError(w, http.StatusUnsupportedMediaType, err.Error())
+		return
+	}
+
+	ctx := r.Context()
+	userIDStr := user.ID.String()
+
+	var response mediaUploadResponse
+	response.FileName = fileHeader.Filename
+	response.MediaType = string(mediaType)
+
+	// Route to appropriate upload handler
+	switch mediaType {
+	case mediaTypeImage:
+		url, err := fh.uploadImageForThirdParty(ctx, userIDStr, fileHeader)
+		if err != nil {
+			response.Error = err.Error()
+			utils.RespondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		response.URL = url
+
+	case mediaTypeVideo:
+		url, err := fh.uploadVideoForThirdPartyMedia(ctx, userIDStr, fileHeader)
+		if err != nil {
+			response.Error = err.Error()
+			utils.RespondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		response.URL = url
+
+	case mediaTypeAudio:
+		url, err := fh.uploadAudioForThirdParty(ctx, userIDStr, fileHeader)
+		if err != nil {
+			response.Error = err.Error()
+			utils.RespondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		response.URL = url
+
+	default:
+		utils.RespondError(w, http.StatusUnsupportedMediaType, "Unsupported media type")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Failed to encode response")
+	}
+}
+
+// uploadImageForThirdParty handles image uploads for third-party integrations
+func (fh *FileHandler) uploadImageForThirdParty(ctx context.Context, userID string, fileHeader *multipart.FileHeader) (string, error) {
+	const maxImageSize = 10 * 1024 * 1024 // 10MB
+	if fileHeader.Size > maxImageSize {
+		return "", fmt.Errorf("image size exceeds 10MB limit")
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+
+	// Generate S3 key
+	key := fmt.Sprintf("uploads/%d_%s_%s", time.Now().UnixNano(), userID, fileHeader.Filename)
+
+	// Upload to S3
+	_, err = fh.S3Uploader.UploadWithContext(ctx, &s3manager.UploadInput{
+		Bucket:      aws.String(fh.S3Bucket),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(fileHeader.Header.Get("Content-Type")),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	// Generate URLs
+	fileURL := fmt.Sprintf("https://%s.s3.amazonaws.com/%s", fh.S3Bucket, key)
+	cdnURL := fmt.Sprintf("%s/%s", fh.AWSCloudFrontDomain, key)
+
+	// Save to database
+	query := `INSERT INTO images (user_id, s3_key, original_filename, mime_type, file_size_bytes, url, cdn_url) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
+
+	var imageID uuid.UUID
+	err = fh.DB.QueryRow(query, userID, key, fileHeader.Filename,
+		fileHeader.Header.Get("Content-Type"), fileHeader.Size, fileURL, cdnURL).Scan(&imageID)
+	if err != nil {
+		return "", fmt.Errorf("failed to save to database: %w", err)
+	}
+
+	host := os.Getenv("BACKEND_URL")
+
+	// /api/file/get-file/{id}
+	params := fmt.Sprintf("/api/file/get-file/%s", imageID)
+
+	url := host + params
+
+	// Return the CDN URL
+	return url, nil
+}
+
+// uploadVideoForThirdPartyMedia handles video uploads for third-party integrations
+func (fh *FileHandler) uploadVideoForThirdPartyMedia(ctx context.Context, userID string, fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader.Size > maxVideoUploadSizeBytes {
+		return "", fmt.Errorf("video size exceeds 50MB limit")
+	}
+
+	if err := validateVideoContentType(fileHeader.Header.Get("Content-Type")); err != nil {
+		return "", err
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+
+	// Generate S3 key
+	key := fmt.Sprintf("videos/%d_%s_%s", time.Now().UnixNano(), userID, fileHeader.Filename)
+
+	// Upload to S3
+	_, err = fh.S3Uploader.UploadWithContext(ctx, &s3manager.UploadInput{
+		Bucket:      aws.String(fh.S3Bucket),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(fileHeader.Header.Get("Content-Type")),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	// Save to database and get ID
+	id, err := fh.saveMediaToDB(userID, key, fileHeader.Filename,
+		fileHeader.Header.Get("Content-Type"), fileHeader.Size, "")
+	if err != nil {
+		return "", err
+	}
+
+	// mux.HandleFunc("GET /api/media/watch?vid={video_id}", fh.HandleMediaStreamingRequest)
+
+	// waterwater
+
+	backend_url := fh.BACKEND_URL
+
+	path := fmt.Sprintf("/api/media/stream?vid=%s", id)
+
+	// Build and return stream URL
+	_ = fh.buildMediaStreamURL(id)
+	return backend_url + path, nil
+}
+
+// uploadAudioForThirdParty handles audio uploads for third-party integrations
+func (fh *FileHandler) uploadAudioForThirdParty(ctx context.Context, userID string, fileHeader *multipart.FileHeader) (string, error) {
+	if fileHeader.Size > maxAudioUploadSizeBytes {
+		return "", fmt.Errorf("audio size exceeds 30MB limit")
+	}
+
+	if err := validateAudioContentType(fileHeader.Header.Get("Content-Type")); err != nil {
+		return "", err
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+
+	// Generate S3 key
+	key := fmt.Sprintf("audio/%d_%s_%s", time.Now().UnixNano(), userID, fileHeader.Filename)
+
+	// Upload to S3
+	_, err = fh.S3Uploader.UploadWithContext(ctx, &s3manager.UploadInput{
+		Bucket:      aws.String(fh.S3Bucket),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(fileHeader.Header.Get("Content-Type")),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	// Save to database and get ID
+	id, err := fh.saveMediaToDB(userID, key, fileHeader.Filename,
+		fileHeader.Header.Get("Content-Type"), fileHeader.Size, "")
+	if err != nil {
+		return "", err
+	}
+
+	// Build and return stream URL
+	streamURL := fh.buildMediaStreamURL(id)
+	return streamURL, nil
+}
+
+func (fh *FileHandler) GetAllVideosWithUserID(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(middleware.UserIDContextKey).(string)
+
+	if userID == "" || userID == " " {
+		utils.RespondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	rows, err := fh.DB.Query(`
+        SELECT id, original_filename, mime_type, file_size_bytes, url, upload_date
+        FROM videos
+        WHERE user_id = $1
+    `, userID)
+	if err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+	defer rows.Close()
+
+	type VideoMetadata struct {
+		Vid              string    `json:"vid"`
+		OriginalFilename string    `json:"original_filename"`
+		MimeType         string    `json:"mime_type"`
+		FileSizeBytes    int64     `json:"file_size_bytes"`
+		Url              string    `json:"url"`
+		UploadDate       time.Time `json:"upload_date"`
+	}
+
+	var videos []VideoMetadata
+
+	for rows.Next() {
+		var v VideoMetadata
+		if err := rows.Scan(&v.Vid, &v.OriginalFilename, &v.MimeType, &v.FileSizeBytes, &v.Url, &v.UploadDate); err != nil {
+			utils.RespondError(w, http.StatusInternalServerError, "Internal server error")
+			return
+		}
+		videos = append(videos, v)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	response := map[string]any{
+		"status": "success",
+		"data":   videos,
+	}
+
+	if err = json.NewEncoder(w).Encode(response); err != nil {
+		utils.RespondError(w, http.StatusInternalServerError, "Unable to encode to json")
+	}
+}
+
+// Video Helper functions
+
+func (fh *FileHandler) saveMediaToDB(userId string, s3Key, filename, mimeType string, fileSize int64, url string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := fh.DB.QueryRow(`
+        INSERT INTO videos (user_id, s3_key, original_filename, mime_type, file_size_bytes, url)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id`,
+		userId, s3Key, filename, mimeType, fileSize, url,
+	).Scan(&id)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to insert video: %w", err)
+	}
+	return id, nil
+}
+
+func (fh *FileHandler) getMediaS3Key(vid string) (string, error) {
+	var s3Key string
+	err := fh.DB.QueryRow(`SELECT s3_key FROM videos WHERE id = $1`, vid).Scan(&s3Key)
+	if err != nil {
+		return "", err
+	}
+	return s3Key, nil
+}
+
+func (fh *FileHandler) deleteMediaFromDB(vid string, userID string) error {
+	var key string
+	err := fh.DB.QueryRow(
+		`DELETE FROM videos WHERE id = $1 AND user_id = $2 RETURNING s3_key`,
+		vid, userID,
+	).Scan(&key)
+	if err != nil {
+		return fmt.Errorf("failed to delete video from DB: %v", err)
+	}
+
+	_, err = fh.S3Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(fh.S3Bucket),
+		Key:    aws.String(key),
+	})
+
+	if err != nil {
+		fmt.Printf("failed to delete object from S3: %v\n", err)
+		return fmt.Errorf("unable to delete video from Cloud")
+	}
+
+	return nil
+}
+
+func validateVideoContentType(contentType string) error {
+	allowedTypes := []string{
+		"video/mp4",
+		"video/webm",
+		"video/ogg",
+		"video/quicktime",
+		"video/x-msvideo",
+		"video/x-ms-wmv",
+		"video/mpeg",
+		"video/3gpp",
+		"video/3gpp2",
+		"video/x-flv",
+		"application/vnd.rn-realmedia",
+		"video/x-matroska",
+	}
+
+	for _, t := range allowedTypes {
+		if contentType == t {
+			return nil
+		}
+	}
+	return fmt.Errorf("unsupported video format: %s", contentType)
 }
